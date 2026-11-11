@@ -1,0 +1,409 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Galaxy · a million suns</title>
+<style>
+:root { color-scheme: dark; --ink: #eef1fb; --dim: rgba(238,241,251,.66); --line: rgba(238,241,251,.2); --glass: rgba(6,8,16,.55); --hot: #ffcf8a; }
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: #000; color: var(--ink);
+  font: 14px/1.4 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; }
+canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
+canvas.drag { cursor: grabbing; }
+.tag { position: fixed; left: max(20px, env(safe-area-inset-left)); top: max(18px, env(safe-area-inset-top)); display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+  pointer-events: none; text-transform: uppercase; letter-spacing: .2em; font-size: 11px; color: var(--dim); }
+.tag b { color: var(--ink); font-weight: 600; }
+.clock { position: fixed; right: max(20px, env(safe-area-inset-right)); top: max(16px, env(safe-area-inset-top)); text-align: right; pointer-events: none;
+  font: 500 13px/1.3 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; letter-spacing: .04em; color: var(--ink); }
+.clock small { display: block; font: 11px/1.4 ui-sans-serif, system-ui, sans-serif; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); }
+.dock { position: fixed; left: 0; right: 0; bottom: max(18px, env(safe-area-inset-bottom)); display: flex; flex-direction: column; align-items: center; gap: 11px;
+  padding: 0 max(16px, env(safe-area-inset-right)) 0 max(16px, env(safe-area-inset-left)); pointer-events: none; }
+.dock > * { pointer-events: auto; }
+.hint { margin: 0; text-align: center; font-size: 12.5px; letter-spacing: .03em; pointer-events: none; transition: opacity 1.4s; color: var(--dim); }
+.row { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px; }
+button { appearance: none; border: 1px solid var(--line); background: var(--glass); color: var(--ink); padding: 8px 14px; border-radius: 999px; font: inherit; font-size: 12.5px;
+  letter-spacing: .04em; cursor: pointer; -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); touch-action: none; user-select: none; -webkit-user-select: none; }
+button:hover { border-color: rgba(238,241,251,.55); }
+button:focus-visible { outline: 2px solid var(--hot); outline-offset: 2px; }
+button.on, button.primary { background: var(--ink); color: #070914; border-color: var(--ink); }
+button.primary { font-weight: 600; padding: 8px 18px; }
+#veil { position: fixed; inset: 0; background: #000; opacity: 0; pointer-events: none; transition: opacity .3s; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="veil"></div>
+<div class="tag"><b>IV</b><span>Galaxy</span><span id="count">1,000,000 stars</span></div>
+<div class="clock" id="clock"><small>time</small><span id="years">undisturbed</span></div>
+<div class="dock">
+  <p class="hint" id="hint">Every star here answers to gravity. Throw a second galaxy at it, then hold rewind to undo a billion years.</p>
+  <div class="row">
+    <button type="button" id="rew" aria-label="Hold to run time backwards">&#9664;&#9664; rewind</button>
+    <button type="button" id="pause">pause</button>
+    <button type="button" id="ff" aria-label="Hold to run time faster">fast &#9654;&#9654;</button>
+    <button type="button" id="collide" class="primary">collide</button>
+  </div>
+</div>
+<script>
+(() => {
+'use strict';
+const $ = id => document.getElementById(id);
+const canvas = $('c'), hint = $('hint'), veil = $('veil');
+const fail = m => { hint.textContent = m; hint.style.color = '#fff'; };
+const gl = canvas.getContext('webgl2', { alpha: false, antialias: false, depth: false, stencil: false, powerPreference: 'high-performance' });
+if (!gl) return fail('This act needs WebGL 2, which this browser does not offer.');
+const HDR = !!(gl.getExtension('EXT_color_buffer_float') || gl.getExtension('EXT_color_buffer_half_float'));
+
+const params = new URLSearchParams(location.search);
+const small = matchMedia('(pointer: coarse)').matches || (navigator.deviceMemory && navigator.deviceMemory <= 4);
+let N = Math.max(20000, Math.min(2000000, Number(params.get('n')) || (small ? 300000 : 1000000)));
+let nA = Math.floor(N * 0.6), nB = N - nA;
+
+// ---------------------------------------------------------------- shaders
+function compile(type, src) { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)); return s; }
+function program(vs, fs, varyings) {
+  const p = gl.createProgram(); gl.attachShader(p, compile(gl.VERTEX_SHADER, vs)); gl.attachShader(p, compile(gl.FRAGMENT_SHADER, fs));
+  if (varyings) gl.transformFeedbackVaryings(p, varyings, gl.INTERLEAVED_ATTRIBS);
+  gl.linkProgram(p); if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+  const u = {}, n = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS);
+  for (let i = 0; i < n; i++) { const name = gl.getActiveUniform(p, i).name.replace('[0]', ''); u[name] = gl.getUniformLocation(p, name); }
+  return { p, u };
+}
+// The physics runs here, on the graphics chip, for every star at once. Each star falls toward the galactic cores
+// (a compact bulge plus a wide dark halo each). Kick-then-drift going forward, drift-then-kick going back: the two are
+// exact inverses, which is why time can be reversed.
+const update = program(`#version 300 es
+precision highp float;
+layout(location=0) in vec4 aPos; layout(location=1) in vec4 aVel;
+uniform vec4 uCore[2]; uniform vec4 uMass[2];
+uniform float uDt, uDir;
+out vec4 vPos; out vec4 vVel;
+vec3 accel(vec3 p){
+  vec3 a = vec3(0.0);
+  for (int i = 0; i < 2; i++) {
+    vec3 d = uCore[i].xyz - p; float r2 = dot(d, d), b = r2 + uMass[i].y, h = r2 + uMass[i].w;
+    a += d*((uMass[i].x*inversesqrt(b*b*b) + uMass[i].z*inversesqrt(h*h*h))*uCore[i].w);
+  }
+  return a;
+}
+void main(){
+  vec3 p = aPos.xyz, v = aVel.xyz;
+  if (uDir > 0.0) { v += accel(p)*uDt; p += v*uDt; } else { p -= v*uDt; v -= accel(p)*uDt; }
+  vPos = vec4(p, aPos.w); vVel = vec4(v, aVel.w);
+}`, '#version 300 es\nprecision highp float;\nvoid main(){}', ['vPos', 'vVel']);
+
+const draw = program(`#version 300 es
+precision highp float;
+layout(location=0) in vec4 aPos; layout(location=1) in vec4 aVel;
+uniform mat4 uVP; uniform float uPx, uGain;
+out vec3 vCol;
+void main(){
+  vec4 cp = uVP*vec4(aPos.xyz, 1.0);
+  gl_Position = cp;
+  float lum = aVel.w, g = floor(aPos.w), t = aPos.w - g, f = 0.55 + 0.5*sqrt(lum);
+  float s = uPx*f/max(cp.w, 0.2), ps = max(s, 1.0);
+  gl_PointSize = min(ps, 28.0);
+  float k = clamp(t*2.2, 0.0, 1.0), j = clamp((t - 0.45)*1.9, 0.0, 1.0);
+  vec3 home = t < 0.45 ? mix(vec3(1.0, 0.55, 0.28), vec3(1.0, 0.86, 0.62), k) : mix(vec3(1.0, 0.95, 0.90), vec3(0.55, 0.72, 1.0), j);
+  vec3 guest = t < 0.45 ? mix(vec3(1.0, 0.36, 0.44), vec3(1.0, 0.70, 0.76), k) : mix(vec3(0.90, 1.0, 0.95), vec3(0.32, 0.95, 0.84), j);   // the visitor wears its own colours
+  vCol = mix(home, guest, g)*(uGain*lum/(f*f)*min(1.0, s*s));
+}`, `#version 300 es
+precision highp float;
+in vec3 vCol; out vec4 o;
+void main(){ vec2 d = gl_PointCoord - 0.5; o = vec4(vCol*exp(-dot(d, d)*9.0), 1.0); }`);
+
+const QUAD_VS = '#version 300 es\nlayout(location=0) in vec2 a; uniform vec2 texel; out vec2 vUv, vL, vR, vT, vB;\nvoid main(){ vUv = a*0.5 + 0.5; vL = vUv - vec2(texel.x, 0.0); vR = vUv + vec2(texel.x, 0.0); vT = vUv + vec2(0.0, texel.y); vB = vUv - vec2(0.0, texel.y); gl_Position = vec4(a, 0.0, 1.0); }';
+const blur = program(QUAD_VS, `#version 300 es
+precision highp float; in vec2 vUv, vL, vR, vT, vB; uniform sampler2D uTex; out vec4 o;
+void main(){ o = (texture(uTex, vUv)*4.0 + texture(uTex, vL) + texture(uTex, vR) + texture(uTex, vT) + texture(uTex, vB))*0.125; }`);
+const compose = program(QUAD_VS, `#version 300 es
+precision highp float; in vec2 vUv;
+uniform sampler2D uHdr, uBloom; uniform vec2 uRes; uniform vec3 uR, uU, uF; uniform float uTan, uTime, uExposure, uGlow;
+out vec4 o;
+float hash3(vec3 p){ p = fract(p*vec3(0.1031, 0.1030, 0.0973)); p += dot(p, p.yzx + 33.33); return fract((p.x + p.y)*p.z); }
+float hash(vec2 p){ vec3 q = fract(vec3(p.xyx)*vec3(0.1031, 0.1030, 0.0973)); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y)*q.z); }
+void main(){
+  vec3 c = texture(uHdr, vUv).rgb + texture(uBloom, vUv).rgb*uGlow;
+  vec2 q = (vUv*2.0 - 1.0)*vec2(uRes.x/uRes.y, 1.0)*uTan;
+  vec3 rd = normalize(uF + uR*q.x + uU*q.y);                               // far background stars, fixed to the sky
+  vec3 g = rd*260.0, i = floor(g), f = fract(g) - 0.5; float h = hash3(i);
+  c += smoothstep(0.989, 1.0, h)*smoothstep(0.4, 0.05, length(f))*mix(vec3(1.0, 0.85, 0.7), vec3(0.7, 0.85, 1.0), fract(h*57.0))*0.22;
+  c = 1.0 - exp(-c*uExposure);
+  vec2 v = vUv - 0.5; c *= 1.0 - dot(v, v)*0.45;
+  c += vec3(0.006, 0.008, 0.016)*(1.0 - dot(v, v)*1.6);
+  c += (hash(gl_FragCoord.xy + fract(uTime)*71.0) - 0.5)/255.0;
+  o = vec4(c, 1.0);
+}`);
+
+// ---------------------------------------------------------------- galaxies
+const GAL = { Mb: 0.25, ab: 0.18, Mh: 2.2, ah: 1.6, Rd: 0.55, Rmax: 3.2 };
+const scaled = (q, s) => ({ Mb: GAL.Mb * q, ab: GAL.ab * s, Mh: GAL.Mh * q, ah: GAL.ah * s, Rd: GAL.Rd * s, Rmax: GAL.Rmax * s });
+const vcirc = (r, g) => { const r2 = r * r; return Math.sqrt(r2 * (g.Mb / Math.pow(r2 + g.ab * g.ab, 1.5) + g.Mh / Math.pow(r2 + g.ah * g.ah, 1.5))); };
+const gauss = () => Math.sqrt(-2 * Math.log(1 - Math.random())) * Math.cos(6.2831853 * Math.random());
+const rotYX = (node, inc) => { const C = Math.cos(node), S = Math.sin(node), c = Math.cos(inc), s = Math.sin(inc); return [C, S * s, S * c, 0, c, -s, -S, C * s, C * c]; };
+
+function fillGalaxy(data, start, n, gi, g, pos, vel, R) {
+  const nb = Math.floor(n * 0.15), pitch = Math.tan(0.42);
+  for (let i = 0; i < n; i++) {
+    let x, y, z, vx, vy, vz, temp, lum;
+    if (i < nb) {                                                  // bulge: old yellow stars on round orbits tilted every which way
+      let r; do { r = g.ab * 1.25 / Math.sqrt(Math.pow(Math.random() * 0.98 + 0.01, -2 / 3) - 1); } while (r > g.Rd * 2.2);
+      const ct = Math.random() * 2 - 1, ph = Math.random() * 6.2831853, st = Math.sqrt(1 - ct * ct);
+      x = st * Math.cos(ph) * r; y = ct * 0.75 * r; z = st * Math.sin(ph) * r;
+      const wx = Math.random() - 0.5, wy = Math.random() - 0.5, wz = Math.random() - 0.5;
+      const px = y * wz - z * wy, py = z * wx - x * wz, pz = x * wy - y * wx, pl = Math.hypot(px, py, pz) || 1;
+      const vc = vcirc(Math.hypot(x, y, z), g) * (0.75 + 0.25 * Math.random());
+      vx = px / pl * vc; vy = py / pl * vc; vz = pz / pl * vc;
+      temp = 0.05 + 0.35 * Math.random(); lum = 0.5 + 2.5 * Math.pow(Math.random(), 5);
+    } else {                                                       // disc: thin, spinning, with two trailing spiral arms
+      let r; do { r = -g.Rd * Math.log(Math.random() * Math.random() + 1e-12); } while (r > g.Rmax || r < 0.05 * g.Rd);
+      const arm = Math.random() < 0.66;
+      const th = arm ? ((Math.random() * 2) | 0) * Math.PI - Math.log(r / (0.36 * g.Rd)) / pitch + gauss() * 0.3 : Math.random() * 6.2831853;
+      x = r * Math.cos(th); z = r * Math.sin(th); y = gauss() * 0.028 * (1 + 0.4 * r);
+      const vc = vcirc(r, g);
+      vx = -Math.sin(th) * vc + gauss() * 0.03; vz = Math.cos(th) * vc + gauss() * 0.03; vy = gauss() * 0.015;
+      temp = arm ? 0.55 + 0.45 * Math.random() : 0.3 + 0.45 * Math.random();
+      lum = 0.3 + 3.2 * Math.pow(Math.random(), 7); if (arm && Math.random() < 0.012) { lum = 5 + Math.random() * 5; temp = 0.97; }
+    }
+    const o = (start + i) * 8;
+    data[o] = R[0] * x + R[1] * y + R[2] * z + pos[0]; data[o + 1] = R[3] * x + R[4] * y + R[5] * z + pos[1]; data[o + 2] = R[6] * x + R[7] * y + R[8] * z + pos[2];
+    data[o + 3] = gi + Math.min(0.999, temp);
+    data[o + 4] = R[0] * vx + R[1] * vy + R[2] * vz + vel[0]; data[o + 5] = R[3] * vx + R[4] * vy + R[5] * vz + vel[1]; data[o + 6] = R[6] * vx + R[7] * vy + R[8] * vz + vel[2];
+    data[o + 7] = lum;
+  }
+}
+
+// ---------------------------------------------------------------- GPU buffers: two copies of the stars, ping-ponged through transform feedback
+let buf = [], vao = [], tf = [], src = 0, count = 0;
+function allocate() {
+  for (let i = 0; i < 2; i++) {
+    if (buf[i]) { gl.deleteBuffer(buf[i]); gl.deleteVertexArray(vao[i]); gl.deleteTransformFeedback(tf[i]); }
+    buf[i] = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, buf[i]); gl.bufferData(gl.ARRAY_BUFFER, N * 32, gl.DYNAMIC_COPY);
+    vao[i] = gl.createVertexArray(); gl.bindVertexArray(vao[i]);
+    gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 4, gl.FLOAT, false, 32, 0);
+    gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 32, 16);
+    gl.bindVertexArray(null); gl.bindBuffer(gl.ARRAY_BUFFER, null);
+    tf[i] = gl.createTransformFeedback(); gl.bindTransformFeedback(gl.TRANSFORM_FEEDBACK, tf[i]); gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER, 0, buf[i]);
+    gl.bindTransformFeedback(gl.TRANSFORM_FEEDBACK, null);
+  }
+  gl.bindBuffer(gl.TRANSFORM_FEEDBACK_BUFFER, null);
+}
+function uploadStars(data, firstStar) { gl.bindBuffer(gl.ARRAY_BUFFER, buf[src]); gl.bufferSubData(gl.ARRAY_BUFFER, firstStar * 32, data); gl.bindBuffer(gl.ARRAY_BUFFER, null); }
+const quadVao = gl.createVertexArray();
+gl.bindVertexArray(quadVao); gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0); gl.bindVertexArray(null); gl.bindBuffer(gl.ARRAY_BUFFER, null);
+
+// ---------------------------------------------------------------- the two cores, integrated on the CPU, with every step remembered
+const H = 0.012, FRICTION = 0.6, REC = 22;
+const mkCore = () => ({ x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, Mb: 0, Mh: 0, ab: 1, ah: 1, on: 0 });
+const cores = [mkCore(), mkCore()];
+const KEYS = ['x', 'y', 'z', 'vx', 'vy', 'vz', 'Mb', 'Mh', 'ab', 'ah', 'on'];
+let hist = new Float32Array(REC * 4096), histN = 0, launched = false, simSteps = 0;
+function record() {
+  if ((histN + 1) * REC > hist.length) {
+    if (hist.length >= REC * 131072) { hist.copyWithin(0, hist.length / 2); histN -= hist.length / 2 / REC; }      // keep the most recent stretch
+    else { const h2 = new Float32Array(hist.length * 2); h2.set(hist); hist = h2; }
+  }
+  let o = histN * REC; for (const c of cores) for (const k of KEYS) hist[o++] = c[k];
+  histN++;
+}
+function restore() { let o = --histN * REC; for (const c of cores) for (const k of KEYS) c[k] = hist[o++]; }
+function stepCores(h) {
+  const a = cores[0], b = cores[1];
+  if (a.on && b.on) {
+    const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z, r2 = dx * dx + dy * dy + dz * dz;
+    const Ma = a.Mb + a.Mh, Mb = b.Mb + b.Mh, soft2 = 0.5 * (a.ah * a.ah + b.ah * b.ah), inv = 1 / Math.pow(r2 + soft2, 1.5);
+    // Overlapping halos drain orbital energy into the stars (dynamical friction): that is what lets galaxies merge instead of passing through for ever.
+    const fr = FRICTION / Math.pow(1 + r2 / (soft2 * 0.8), 2), wa = Mb / (Ma + Mb), wb = Ma / (Ma + Mb);
+    const rx = b.vx - a.vx, ry = b.vy - a.vy, rz = b.vz - a.vz;
+    a.vx += (Mb * dx * inv + fr * wa * rx) * h; a.vy += (Mb * dy * inv + fr * wa * ry) * h; a.vz += (Mb * dz * inv + fr * wa * rz) * h;
+    b.vx -= (Ma * dx * inv + fr * wb * rx) * h; b.vy -= (Ma * dy * inv + fr * wb * ry) * h; b.vz -= (Ma * dz * inv + fr * wb * rz) * h;
+    if (r2 < 0.02 && rx * rx + ry * ry + rz * rz < 0.3) {              // close and slow enough: the cores become one
+      a.x = (a.x * Ma + b.x * Mb) / (Ma + Mb); a.y = (a.y * Ma + b.y * Mb) / (Ma + Mb); a.z = (a.z * Ma + b.z * Mb) / (Ma + Mb);
+      a.vx = (a.vx * Ma + b.vx * Mb) / (Ma + Mb); a.vy = (a.vy * Ma + b.vy * Mb) / (Ma + Mb); a.vz = (a.vz * Ma + b.vz * Mb) / (Ma + Mb);
+      a.Mb += b.Mb; a.Mh += b.Mh; a.ab = Math.max(a.ab, b.ab) * 1.15; a.ah = Math.max(a.ah, b.ah) * 1.1; b.on = 0;
+    }
+  }
+  for (const c of cores) if (c.on) { c.x += c.vx * h; c.y += c.vy * h; c.z += c.vz * h; }
+}
+const coreArr = new Float32Array(8), massArr = new Float32Array(8);
+function tfStep(dir) {
+  for (let i = 0; i < 2; i++) { const c = cores[i]; coreArr.set([c.x, c.y, c.z, c.on], i * 4); massArr.set([c.Mb, c.ab * c.ab, c.Mh, c.ah * c.ah], i * 4); }
+  gl.useProgram(update.p); gl.uniform4fv(update.u.uCore, coreArr); gl.uniform4fv(update.u.uMass, massArr); gl.uniform1f(update.u.uDt, H); gl.uniform1f(update.u.uDir, dir);
+  gl.bindBuffer(gl.ARRAY_BUFFER, null); gl.bindVertexArray(vao[src]); gl.bindTransformFeedback(gl.TRANSFORM_FEEDBACK, tf[1 - src]);
+  gl.enable(gl.RASTERIZER_DISCARD); gl.beginTransformFeedback(gl.POINTS); gl.drawArrays(gl.POINTS, 0, count); gl.endTransformFeedback(); gl.disable(gl.RASTERIZER_DISCARD);
+  gl.bindTransformFeedback(gl.TRANSFORM_FEEDBACK, null); gl.bindVertexArray(null);
+  src = 1 - src;
+}
+
+// ---------------------------------------------------------------- scenes
+function fresh() {                                                 // one undisturbed spiral
+  const data = new Float32Array(nA * 8);
+  fillGalaxy(data, 0, nA, 0, GAL, [0, 0, 0], [0, 0, 0], rotYX(0, 0));
+  uploadStars(data, 0);
+  Object.assign(cores[0], mkCore(), { Mb: GAL.Mb, Mh: GAL.Mh, ab: GAL.ab, ah: GAL.ah, on: 1 }); Object.assign(cores[1], mkCore());
+  count = nA; launched = false; histN = 0; simSteps = 0; dir = 1;
+}
+function launch(scripted) {                                        // send the visitor in on a near-parabolic, prograde orbit
+  const q = scripted ? 0.7 : 0.5 + Math.random() * 0.5, s = 0.72 + 0.28 * q, g = scaled(q, s), A = cores[0];
+  const rp = scripted ? 1.4 : 0.95 + Math.random() * 0.7, r0 = 9.5, f0 = -Math.acos(2 * rp / r0 - 1);
+  const mu = (GAL.Mb + GAL.Mh) * (1 + q), k = Math.sqrt(mu / (2 * rp));
+  const O = rotYX(scripted ? 2.3 : Math.random() * 6.283, scripted ? 0.38 : (Math.random() - 0.5) * 1.5);        // orbit plane
+  const px = r0 * Math.cos(f0), pz = r0 * Math.sin(f0), ux = -k * Math.sin(f0), uz = k * (1 + Math.cos(f0));
+  const pos = [O[0] * px + O[2] * pz + A.x, O[3] * px + O[5] * pz + A.y, O[6] * px + O[8] * pz + A.z];
+  const vel = [O[0] * ux + O[2] * uz + A.vx, O[3] * ux + O[5] * uz + A.vy, O[6] * ux + O[8] * uz + A.vz];
+  const data = new Float32Array(nB * 8);
+  fillGalaxy(data, 0, nB, 1, g, pos, vel, rotYX(scripted ? 0.6 : Math.random() * 6.283, scripted ? 1.05 : Math.random() * 2.6));
+  uploadStars(data, nA);
+  Object.assign(cores[1], { x: pos[0], y: pos[1], z: pos[2], vx: vel[0], vy: vel[1], vz: vel[2], Mb: g.Mb, Mh: g.Mh, ab: g.ab, ah: g.ah, on: 1 });
+  count = N; launched = true; histN = 0; simSteps = 0; dir = 1; paused = false; syncButtons();
+}
+
+// ---------------------------------------------------------------- camera
+const cam = { yaw: 0.6, pitch: 0.62, dist: 7.6, zoom: 1, tx: 0, ty: 0, tz: 0, spin: true };
+function perspective(fovy, aspect, near, far) { const f = 1 / Math.tan(fovy / 2), nf = 1 / (near - far); return [f / aspect, 0, 0, 0, 0, f, 0, 0, 0, 0, (far + near) * nf, -1, 0, 0, 2 * far * near * nf, 0]; }
+function mul(a, b) { const o = new Array(16); for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) o[c * 4 + r] = a[r] * b[c * 4] + a[4 + r] * b[c * 4 + 1] + a[8 + r] * b[c * 4 + 2] + a[12 + r] * b[c * 4 + 3]; return o; }
+const FOV = 0.87;
+
+// ---------------------------------------------------------------- render targets
+let W = 0, Hh = 0, hdrTex = null, hdrFb = null, levels = [];
+function target(w, h) {
+  const tex = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, w, h, 0, gl.RGBA, gl.HALF_FLOAT, null);
+  const fb = gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER, fb); gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+  return { tex, fb, w, h };
+}
+function resize() {
+  let dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const cw = canvas.clientWidth || innerWidth, ch = canvas.clientHeight || innerHeight;
+  dpr = Math.min(dpr, Math.sqrt(5.2e6 / (cw * ch)));
+  const w = Math.max(2, Math.round(cw * dpr)), h = Math.max(2, Math.round(ch * dpr));
+  if (w === W && h === Hh) return;
+  W = canvas.width = w; Hh = canvas.height = h;
+  if (!HDR) return;
+  if (hdrTex) { gl.deleteTexture(hdrTex.tex); gl.deleteFramebuffer(hdrTex.fb); levels.forEach(l => { gl.deleteTexture(l.tex); gl.deleteFramebuffer(l.fb); }); }
+  hdrTex = target(W, Hh); levels = [];
+  for (let lw = W >> 1, lh = Hh >> 1, i = 0; i < 6 && lw > 8 && lh > 8; i++, lw >>= 1, lh >>= 1) levels.push(target(lw, lh));
+}
+
+// ---------------------------------------------------------------- loop
+let time = 0, last = 0, acc = 0, dir = 1, paused = false, fast = false, rewinding = false, slow = 0, frames = 0;
+const yearsEl = $('years');
+function advance(dt) {
+  if (paused && !rewinding) return;
+  const rate = (launched ? 1.6 : 0.5) * (rewinding ? 2.6 : fast ? 4 : 1);
+  acc += dt * rate; let n = Math.floor(acc / H); acc -= n * H; n = Math.min(n, 14);
+  for (let i = 0; i < n; i++) {
+    if (rewinding) { if (!histN) break; restore(); tfStep(-1); simSteps--; }
+    else { if (launched) record(); tfStep(1); stepCores(H); if (launched) simSteps++; }
+  }
+}
+function frame(ts) { requestAnimationFrame(frame); tick(ts); }
+function tick(ts) {
+  const raw = last ? ts - last : 16.7, dt = Math.min(0.05, raw / 1000); last = ts; time += dt; frames++;
+  resize(); advance(dt);
+
+  // follow the centre of mass, and pull back far enough to keep both galaxies in frame
+  const a = cores[0], b = cores[1], Ma = a.Mb + a.Mh, Mb = b.on ? b.Mb + b.Mh : 0, M = Ma + Mb;
+  const cx = (a.x * Ma + b.x * Mb) / M, cy = (a.y * Ma + b.y * Mb) / M, cz = (a.z * Ma + b.z * Mb) / M;
+  const sep = b.on ? Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z) : 0, k = Math.min(1, dt * 2.2);
+  cam.tx += (cx - cam.tx) * k; cam.ty += (cy - cam.ty) * k; cam.tz += (cz - cam.tz) * k;
+  cam.dist += (Math.max(7.6, sep * 1.05 + 6.2) - cam.dist) * Math.min(1, dt * 1.6);
+  if (cam.spin && !dragging) cam.yaw += dt * 0.035;
+  const d = cam.dist * cam.zoom, cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch);
+  const eye = [cam.tx + d * cp * Math.sin(cam.yaw), cam.ty + d * sp, cam.tz + d * cp * Math.cos(cam.yaw)];
+  let fx = cam.tx - eye[0], fy = cam.ty - eye[1], fz = cam.tz - eye[2]; const fl = Math.hypot(fx, fy, fz); fx /= fl; fy /= fl; fz /= fl;
+  let rx = -fz, rz = fx; const rl = Math.hypot(rx, rz) || 1; rx /= rl; rz /= rl;                    // right = forward x up
+  const ux = -rz * fy, uy = rz * fx - rx * fz, uz = rx * fy;                                           // up = right x forward
+  const view = [rx, ux, -fx, 0, 0, uy, -fy, 0, rz, uz, -fz, 0, -(rx * eye[0] + rz * eye[2]), -(ux * eye[0] + uy * eye[1] + uz * eye[2]), fx * eye[0] + fy * eye[1] + fz * eye[2], 1];
+  const vp = mul(perspective(FOV, W / Hh, 0.05, 400), view);
+
+  gl.bindFramebuffer(gl.FRAMEBUFFER, HDR ? hdrTex.fb : null); gl.viewport(0, 0, W, Hh);
+  gl.clearColor(0, 0, 0, 1); gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE);
+  gl.useProgram(draw.p); gl.uniformMatrix4fv(draw.u.uVP, false, vp);
+  gl.uniform1f(draw.u.uPx, Hh * 0.0105); gl.uniform1f(draw.u.uGain, (HDR ? 0.125 : 0.04) * Math.sqrt(1e6 / N));
+  gl.bindVertexArray(vao[src]); gl.drawArrays(gl.POINTS, 0, count); gl.bindVertexArray(null);
+  gl.disable(gl.BLEND);
+
+  if (HDR) {
+    gl.bindVertexArray(quadVao); gl.useProgram(blur.p); gl.activeTexture(gl.TEXTURE0); gl.uniform1i(blur.u.uTex, 0);
+    let from = hdrTex;
+    for (const l of levels) { gl.bindFramebuffer(gl.FRAMEBUFFER, l.fb); gl.viewport(0, 0, l.w, l.h); gl.bindTexture(gl.TEXTURE_2D, from.tex); gl.uniform2f(blur.u.texel, 1 / from.w, 1 / from.h); gl.drawArrays(gl.TRIANGLES, 0, 3); from = l; }
+    gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE);
+    for (let i = levels.length - 1; i > 0; i--) { const l = levels[i - 1]; gl.bindFramebuffer(gl.FRAMEBUFFER, l.fb); gl.viewport(0, 0, l.w, l.h); gl.bindTexture(gl.TEXTURE_2D, levels[i].tex); gl.uniform2f(blur.u.texel, 1 / levels[i].w, 1 / levels[i].h); gl.drawArrays(gl.TRIANGLES, 0, 3); }
+    gl.disable(gl.BLEND);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.viewport(0, 0, W, Hh); gl.useProgram(compose.p);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, hdrTex.tex); gl.uniform1i(compose.u.uHdr, 0);
+    gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, levels.length ? levels[0].tex : hdrTex.tex); gl.uniform1i(compose.u.uBloom, 1);
+    gl.uniform2f(compose.u.uRes, W, Hh); gl.uniform3f(compose.u.uR, rx, 0, rz); gl.uniform3f(compose.u.uU, ux, uy, uz); gl.uniform3f(compose.u.uF, fx, fy, fz);
+    gl.uniform1f(compose.u.uTan, Math.tan(FOV / 2)); gl.uniform1f(compose.u.uTime, time); gl.uniform1f(compose.u.uExposure, 1.45); gl.uniform1f(compose.u.uGlow, levels.length ? 0.3 : 0);
+    gl.drawArrays(gl.TRIANGLES, 0, 3); gl.bindVertexArray(null);
+  }
+
+  if (launched) { const myr = simSteps * H * 25; yearsEl.textContent = (rewinding ? '◀ ' : '+') + (myr >= 1000 ? (myr / 1000).toFixed(2) + ' billion years' : Math.round(myr) + ' million years'); }
+  else yearsEl.textContent = 'undisturbed';
+
+  // a machine that cannot keep up gets half the stars (checked once, early, and only on real evidence)
+  if (frames > 40 && frames < 240 && raw < 200) { slow = raw > 40 ? slow + 1 : 0; if (slow > 70 && N > 150000) { N = Math.floor(N / 2); nA = Math.floor(N * 0.6); nB = N - nA; slow = 0; frames = 0; boot(); } }
+}
+
+// ---------------------------------------------------------------- controls
+const btn = { rew: $('rew'), pause: $('pause'), ff: $('ff'), collide: $('collide') };
+const quiet = () => { hint.style.opacity = '0'; };
+function syncButtons() {
+  btn.pause.textContent = paused ? 'play' : 'pause'; btn.pause.classList.toggle('on', paused);
+  btn.rew.classList.toggle('on', rewinding); btn.ff.classList.toggle('on', fast);
+  btn.collide.textContent = launched ? 'new encounter' : 'collide';
+}
+function collide() {
+  quiet();
+  if (!launched) { launch(true); return; }
+  veil.style.opacity = '1';
+  setTimeout(() => { fresh(); launch(false); cam.tx = cam.ty = cam.tz = 0; setTimeout(() => { veil.style.opacity = '0'; }, 80); }, 320);
+}
+btn.collide.addEventListener('click', collide);
+btn.pause.addEventListener('click', () => { paused = !paused; syncButtons(); });
+function hold(el, on, off) {
+  el.addEventListener('pointerdown', e => { e.preventDefault(); try { el.setPointerCapture(e.pointerId); } catch (_) {} on(); syncButtons(); quiet(); });
+  for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) el.addEventListener(ev, () => { off(); syncButtons(); });
+}
+hold(btn.rew, () => { rewinding = true; }, () => { rewinding = false; });
+hold(btn.ff, () => { fast = true; }, () => { fast = false; });
+addEventListener('keydown', e => {
+  if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+  if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); if (!e.repeat) collide(); }
+  else if (e.key === 'ArrowLeft') { e.preventDefault(); rewinding = true; syncButtons(); quiet(); }
+  else if (e.key === 'ArrowRight') { e.preventDefault(); fast = true; syncButtons(); }
+  else if (e.key === 'p' || e.key === 'P' || e.key === 'k' || e.key === 'K') { paused = !paused; syncButtons(); }
+});
+addEventListener('keyup', e => { if (e.key === 'ArrowLeft') { rewinding = false; syncButtons(); } else if (e.key === 'ArrowRight') { fast = false; syncButtons(); } });
+addEventListener('blur', () => { rewinding = false; fast = false; syncButtons(); });
+let dragging = false, lx = 0, ly = 0;
+canvas.addEventListener('pointerdown', e => { dragging = true; lx = e.clientX; ly = e.clientY; canvas.classList.add('drag'); try { canvas.setPointerCapture(e.pointerId); } catch (_) {} });
+canvas.addEventListener('pointermove', e => { if (!dragging) return; cam.yaw -= (e.clientX - lx) * 0.005; cam.pitch = Math.max(-1.5, Math.min(1.5, cam.pitch + (e.clientY - ly) * 0.005)); lx = e.clientX; ly = e.clientY; });
+const drop = () => { dragging = false; canvas.classList.remove('drag'); };
+canvas.addEventListener('pointerup', drop); canvas.addEventListener('pointercancel', drop);
+canvas.addEventListener('wheel', e => { e.preventDefault(); cam.zoom = Math.max(0.25, Math.min(3, cam.zoom * Math.exp(e.deltaY * 0.0012))); }, { passive: false });
+// presenter hub bridge
+addEventListener('keydown', e => {
+  const m = e.key === 'PageDown' || (e.shiftKey && e.key === 'ArrowRight') ? 'next' : e.key === 'PageUp' || (e.shiftKey && e.key === 'ArrowLeft') ? 'prev' : e.key === 'Escape' ? 'menu' : '';
+  if (m && parent !== window) { e.preventDefault(); e.stopPropagation(); parent.postMessage({ sit: m }, '*'); }
+}, true);
+
+function boot() {
+  $('count').textContent = N.toLocaleString('en-US') + ' stars';
+  allocate(); fresh(); syncButtons();
+}
+try { boot(); } catch (err) { console.error(err); return fail('This graphics chip could not start the simulation.'); }
+setTimeout(quiet, 16000);
+window.__galaxy = { collide, cores, cam, run(n) { for (let i = 0; i < n; i++) tick(last + 16.7); const a = cores[0], b = cores[1]; return { sep: b.on ? +Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z).toFixed(2) : null, t: +(simSteps * H).toFixed(1), histN }; }, stats: () => ({ N, count, launched, histN, simSteps, W, Hh, HDR }), set rewinding(v) { rewinding = v; }, set fast(v) { fast = v; } };
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

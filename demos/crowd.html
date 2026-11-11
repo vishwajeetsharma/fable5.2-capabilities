@@ -1,0 +1,469 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Crowd · one hundred thousand particles</title>
+<style>
+:root { color-scheme: dark; --ink: #eaf0ff; --dim: rgba(234,240,255,.62); --line: rgba(234,240,255,.18); --glass: rgba(10,13,26,.6); --hot: #7fe7ff; }
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: #03040a; }
+body { background: radial-gradient(120% 95% at 50% 42%, #0c1230 0%, #060816 52%, #020308 100%); color: var(--ink);
+  font: 14px/1.4 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; }
+canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; mix-blend-mode: screen; touch-action: none; cursor: crosshair; }
+.tag { position: fixed; left: max(20px, env(safe-area-inset-left)); top: max(18px, env(safe-area-inset-top)); display: flex; align-items: baseline; gap: 10px;
+  pointer-events: none; text-transform: uppercase; letter-spacing: .2em; font-size: 11px; color: var(--dim); }
+.tag b { color: var(--ink); font-weight: 600; }
+.dock { position: fixed; left: 0; right: 0; bottom: max(18px, env(safe-area-inset-bottom)); display: flex; flex-direction: column; align-items: center; gap: 11px;
+  padding: 0 max(16px, env(safe-area-inset-right)) 0 max(16px, env(safe-area-inset-left)); pointer-events: none; }
+.dock > * { pointer-events: auto; }
+.hint { margin: 0; text-align: center; font-size: 12.5px; color: var(--dim); letter-spacing: .03em; pointer-events: none; transition: opacity 1.4s; }
+#txt { width: min(560px, 100%); background: transparent; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; color: var(--ink);
+  font: inherit; font-size: 21px; font-weight: 500; letter-spacing: .1em; text-align: center; padding: 7px 4px; outline: none; text-transform: uppercase; caret-color: var(--hot); }
+#txt::placeholder { color: rgba(234,240,255,.4); text-transform: none; letter-spacing: .02em; }
+#txt:focus { border-bottom-color: rgba(127,231,255,.75); }
+.chips { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+.chips button { appearance: none; border: 1px solid var(--line); background: var(--glass); color: var(--ink); padding: 7px 13px; border-radius: 999px;
+  font: inherit; font-size: 12.5px; letter-spacing: .04em; cursor: pointer; -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+.chips button:hover { border-color: rgba(234,240,255,.5); }
+.chips button:focus-visible { outline: 2px solid var(--hot); outline-offset: 2px; }
+.chips button.on { background: var(--ink); color: #070914; border-color: var(--ink); }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="tag"><b>I</b><span>Crowd</span><span>100,000 particles</span></div>
+<div class="dock">
+  <p class="hint" id="hint">One dot for each of you. Type anything, move to scatter, press and hold to gather, let go to burst.</p>
+  <input id="txt" type="text" enterkeyhint="go" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false" maxlength="60" placeholder="type anything" aria-label="Words for the particles to form">
+  <div class="chips">
+    <button type="button" data-t="HELLO">hello</button>
+    <button type="button" data-t="100,000">100,000</button>
+    <button type="button" data-s="heart">heart</button>
+    <button type="button" data-s="helix">dna</button>
+    <button type="button" data-s="planet">planet</button>
+    <button type="button" id="pic">picture…</button>
+    <button type="button" id="auto" class="on" aria-pressed="true">auto</button>
+  </div>
+</div>
+<input id="file" type="file" accept="image/*" hidden>
+<script>
+(() => {
+'use strict';
+const N = 100000;
+const $ = id => document.getElementById(id);
+const canvas = $('c'), input = $('txt'), hint = $('hint'), autoBtn = $('auto'), fileIn = $('file');
+const gl = canvas.getContext('webgl', { alpha: false, antialias: false, depth: false, stencil: false, preserveDrawingBuffer: true, powerPreference: 'high-performance' });
+if (!gl) { hint.textContent = 'This act needs WebGL, and this browser has it switched off.'; return; }
+
+// ---------------------------------------------------------------- state
+let W = 0, H = 0, CH = 1, aspect = 1, dpr = 1, pointSize = 3;
+const P = new Float32Array(N * 3), V = new Float32Array(N * 2);         // position (x, y, brightness), velocity
+const T0 = new Float32Array(N * 3), T1 = new Float32Array(N * 3);       // previous anchor, new target
+const SW = new Float32Array(N), KS = new Float32Array(N), SWIRL = new Float32Array(N);
+const colA = new Float32Array(N * 3), colB = new Float32Array(N * 3), misc = new Float32Array(N * 2);
+const NT = new Float32Array(N * 3), NC = new Float32Array(N * 3);       // freshly sampled shape + colours
+const idxP = new Uint32Array(N), idxT = new Uint32Array(N);
+const kx = new Float32Array(N), ky = new Float32Array(N), qx = new Float32Array(N), qy = new Float32Array(N);
+let is3d = false, rot = 0, time = 0, alphaNow = 0.2, alphaTarget = 0.2;
+const gauss = () => Math.sqrt(-2 * Math.log(1 - Math.random())) * Math.cos(6.2831853 * Math.random());
+
+// ---------------------------------------------------------------- GL
+const sh = (t, s) => { const o = gl.createShader(t); gl.shaderSource(o, s); gl.compileShader(o); if (!gl.getShaderParameter(o, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(o)); return o; };
+const link = (vs, fs, attrs) => { const p = gl.createProgram(); gl.attachShader(p, sh(gl.VERTEX_SHADER, vs)); gl.attachShader(p, sh(gl.FRAGMENT_SHADER, fs));
+  attrs.forEach((a, i) => gl.bindAttribLocation(p, i, a)); gl.linkProgram(p); if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p)); return p; };
+
+const ptProg = link(`
+attribute vec3 a_pos; attribute vec3 a_colA; attribute vec3 a_colB; attribute vec2 a_misc;
+uniform float u_time, u_aspect, u_size, u_alpha;
+varying vec3 v_col;
+void main() {
+  float m = clamp((u_time - a_misc.y) / 0.9, 0.0, 1.0); m = m * m * (3.0 - 2.0 * m);
+  float tw = 0.8 + 0.2 * sin(u_time * (1.3 + a_misc.x * 3.7) + a_misc.x * 61.0);
+  v_col = mix(a_colA, a_colB, m) * (u_alpha * tw * a_pos.z);
+  gl_Position = vec4(a_pos.x / u_aspect, a_pos.y, 0.0, 1.0);
+  gl_PointSize = u_size * (0.75 + 0.6 * a_misc.x) * (0.6 + 0.4 * a_pos.z);
+}`, `
+precision mediump float;
+varying vec3 v_col;
+void main() {
+  vec2 d = gl_PointCoord - 0.5;
+  gl_FragColor = vec4(v_col * smoothstep(0.25, 0.0, dot(d, d)), 1.0);
+}`, ['a_pos', 'a_colA', 'a_colB', 'a_misc']);
+const quadProg = link('attribute vec2 a_p; void main(){ gl_Position = vec4(a_p, 0.0, 1.0); }',
+  'precision mediump float; uniform vec4 u_c; void main(){ gl_FragColor = u_c; }', ['a_p']);
+const U = n => gl.getUniformLocation(ptProg, n);
+const uTime = U('u_time'), uAspect = U('u_aspect'), uSize = U('u_size'), uAlpha = U('u_alpha'), uQC = gl.getUniformLocation(quadProg, 'u_c');
+const mkBuf = (data, usage) => { const b = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, b); gl.bufferData(gl.ARRAY_BUFFER, data, usage); return b; };
+let bufP, bufA, bufB, bufM;
+const bufQ = mkBuf(new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+const upload = (buf, data) => { gl.bindBuffer(gl.ARRAY_BUFFER, buf); gl.bufferSubData(gl.ARRAY_BUFFER, 0, data); };
+
+// ---------------------------------------------------------------- colour
+const PALETTES = [
+  [[0.21, 0.89, 1.00], [0.48, 0.42, 1.00], [1.00, 0.37, 0.82]],
+  [[1.00, 0.84, 0.42], [1.00, 0.50, 0.33], [1.00, 0.24, 0.55]],
+  [[0.62, 1.00, 0.69], [0.20, 0.88, 0.78], [0.31, 0.62, 1.00]],
+  [[1.00, 0.95, 0.78], [1.00, 0.80, 0.42], [1.00, 0.52, 0.26]],
+];
+let palIndex = 3;
+function palColor(pal, t, out, o) {
+  t = t < 0 ? 0 : t > 0.9999 ? 0.9999 : t;
+  const s = t * 2, i = s | 0, f = s - i, a = pal[i], b = pal[i + 1], k = 0.82 + Math.random() * 0.36;
+  out[o] = (a[0] + (b[0] - a[0]) * f) * k; out[o + 1] = (a[1] + (b[1] - a[1]) * f) * k; out[o + 2] = (a[2] + (b[2] - a[2]) * f) * k;
+}
+
+// ---------------------------------------------------------------- shapes drawn on a hidden canvas, then sampled
+const sc = document.createElement('canvas'), sx = sc.getContext('2d', { willReadFrequently: true });
+const FONT = '"SF Pro Display", "Inter", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif';
+let sampleW = new Float32Array(1), picArea = 0;
+
+function toLines(str) {
+  if (str.indexOf('\n') >= 0) return str.split('\n').map(s => s.trim()).filter(Boolean);
+  const words = str.trim().split(/\s+/), len = str.length;
+  const want = len <= 11 ? 1 : len <= 26 ? 2 : len <= 44 ? 3 : 4;
+  if (want === 1 || words.length === 1) return [words.join(' ')];
+  const target = len / want, lines = []; let cur = '';
+  for (const w of words) {
+    if (cur && cur.length + 1 + w.length > target * 1.15 && lines.length < want - 1) { lines.push(cur); cur = w; }
+    else cur = cur ? cur + ' ' + w : w;
+  }
+  if (cur) lines.push(cur);
+  return lines;
+}
+function drawText(str) {
+  const w = sc.width, h = sc.height, lines = toLines(str), lh = 1.04;
+  sx.clearRect(0, 0, w, h);
+  let size = 200; sx.font = `800 ${size}px ${FONT}`;
+  let maxW = 1; for (const l of lines) maxW = Math.max(maxW, sx.measureText(l).width);
+  size = Math.max(8, size * Math.min(w * 0.88 / maxW, h * 0.6 / (lines.length * lh * size)));
+  sx.font = `800 ${size}px ${FONT}`; sx.textAlign = 'center'; sx.textBaseline = 'middle'; sx.fillStyle = '#fff';
+  const total = lines.length * lh * size, top = h * 0.44 - total / 2;
+  lines.forEach((l, i) => sx.fillText(l, w / 2, top + (i + 0.5) * lh * size));
+}
+function drawPicture(img) {
+  const w = sc.width, h = sc.height, iw0 = img.naturalWidth || img.width, ih0 = img.naturalHeight || img.height;
+  sx.clearRect(0, 0, w, h);
+  const s = Math.min(w * 0.86 / iw0, h * 0.7 / ih0), iw = iw0 * s, ih = ih0 * s;
+  sx.drawImage(img, (w - iw) / 2, h * 0.44 - ih / 2, iw, ih);
+  picArea = iw * ih;
+}
+// mode 'text': density follows coverage; grey pixels take the palette, coloured ones (emoji, logos) keep their own colour.
+// mode 'photo': density follows brightness, so the picture is stippled out of light.
+function sample(mode) {
+  const w = sc.width, h = sc.height, n = w * h, d = sx.getImageData(0, 0, w, h).data;
+  if (sampleW.length !== n) sampleW = new Float32Array(n);
+  const wt = sampleW; let total = 0, solid = 0;
+  for (let i = 0, p = 0; i < n; i++, p += 4) if (d[p + 3] > 20) solid++;
+  if (mode === 'picture') mode = solid < picArea * 0.96 ? 'text' : 'photo';
+  for (let i = 0, p = 0; i < n; i++, p += 4) {
+    const a = d[p + 3]; let x = 0;
+    if (a > 20) { x = a / 255; if (mode === 'photo') x *= 0.03 + Math.pow((0.3 * d[p] + 0.59 * d[p + 1] + 0.11 * d[p + 2]) / 255, 0.8); }
+    wt[i] = x; total += x;
+  }
+  if (total < 30) return false;
+  const pal = PALETTES[palIndex], step = total / N, s = 2 / h;
+  let acc = 0, next = Math.random() * step, j = 0;
+  for (let i = 0, p = 0; i < n && j < N; i++, p += 4) {
+    const x = wt[i]; if (x === 0) continue;
+    acc += x;
+    while (acc > next && j < N) {
+      const X = ((i % w) + Math.random() - w * 0.5) * s, Y = -(((i / w) | 0) + Math.random() - h * 0.5) * s, o = j * 3;
+      NT[o] = X; NT[o + 1] = Y; NT[o + 2] = 0;
+      const r = d[p] / 255, g = d[p + 1] / 255, b = d[p + 2] / 255;
+      if (mode === 'photo') {
+        const k = 1 / (0.03 + Math.pow(0.3 * r + 0.59 * g + 0.11 * b, 0.8));
+        NC[o] = Math.min(1.5, r * k); NC[o + 1] = Math.min(1.5, g * k); NC[o + 2] = Math.min(1.5, b * k);
+      } else if (Math.max(r, g, b) - Math.min(r, g, b) < 0.12) {
+        palColor(pal, (X / aspect) * 0.5 + 0.5 + Y * 0.1 + (Math.random() - 0.5) * 0.1, NC, o);
+      } else { NC[o] = r * 1.1; NC[o + 1] = g * 1.1; NC[o + 2] = b * 1.1; }
+      j++; next += step;
+    }
+  }
+  for (; j < N; j++) { const k = ((Math.random() * j) | 0) * 3, o = j * 3; for (let c = 0; c < 3; c++) { NT[o + c] = NT[k + c]; NC[o + c] = NC[k + c]; } }
+  return true;
+}
+
+// three-dimensional shapes: model space, rotated about the vertical axis every frame
+const SHAPES = {
+  cloud() {
+    const pal = PALETTES[palIndex];
+    for (let j = 0, o = 0; j < N; j++, o += 3) {
+      const r = Math.pow(Math.random(), 0.55) * 0.78, th = ((Math.random() * 3) | 0) * 2.0944 + r * 4.2 + gauss() * (0.5 - r * 0.3);
+      NT[o] = Math.cos(th) * r * 1.2; NT[o + 1] = Math.sin(th) * r * 0.8 + 0.1; NT[o + 2] = 0;
+      palColor(pal, r * 1.2 + (Math.random() - 0.5) * 0.2, NC, o);
+    }
+  },
+  heart() {
+    for (let j = 0, o = 0; j < N; j++, o += 3) {
+      const u = Math.random() * 2 - 1, th = Math.random() * 6.2831853, q = Math.sqrt(1 - u * u);
+      const dx = q * Math.cos(th), dy = q * Math.sin(th), dz = u;
+      let lo = 0, hi = 1.7;
+      for (let it = 0; it < 18; it++) {
+        const m = (lo + hi) / 2, X = dx * m, Y = dy * m, Z = dz * m, a = X * X + 2.25 * Y * Y + Z * Z - 1;
+        if (a * a * a - X * X * Z * Z * Z - 0.1125 * Y * Y * Z * Z * Z < 0) lo = m; else hi = m;
+      }
+      let t = lo * 0.5; const inner = Math.random() < 0.22; if (inner) t *= Math.cbrt(Math.random());
+      NT[o] = dx * t; NT[o + 1] = dz * t; NT[o + 2] = dy * t;
+      const k = 0.75 + Math.random() * 0.4, w = Math.random();
+      NC[o] = 1.0 * k; NC[o + 1] = (inner ? 0.12 : 0.2 + 0.28 * w) * k; NC[o + 2] = (inner ? 0.25 : 0.38 + 0.3 * w) * k;
+    }
+  },
+  helix() {
+    const turns = 2.5, R = 0.3, HH = 1.42, tilt = 0.32, ct = Math.cos(tilt), st = Math.sin(tilt);
+    const BASE = [[1.0, 0.82, 0.35], [0.45, 1.0, 0.6], [1.0, 0.45, 0.4], [0.55, 0.65, 1.0]];
+    for (let j = 0, o = 0; j < N; j++, o += 3) {
+      const t = Math.random(); let x, y, z, c;
+      if (j < N * 0.6) {
+        const s = j & 1, a = t * turns * 6.2831853 + s * Math.PI;
+        x = Math.cos(a) * R + gauss() * 0.014; z = Math.sin(a) * R + gauss() * 0.014; y = (t - 0.5) * HH + gauss() * 0.014;
+        c = s ? [0.25, 0.85, 1.0] : [1.0, 0.36, 0.78];
+      } else {
+        const rung = Math.floor(t * 30), k = (rung + 0.5) / 30, a = k * turns * 6.2831853, f = Math.random() * 2 - 1;
+        x = Math.cos(a) * R * f; z = Math.sin(a) * R * f; y = (k - 0.5) * HH + gauss() * 0.006;
+        c = BASE[(rung * 7 + (f < 0 ? 0 : 2)) % 4];
+      }
+      NT[o] = x * ct - y * st; NT[o + 1] = x * st + y * ct; NT[o + 2] = z;
+      const b = 0.8 + Math.random() * 0.4; NC[o] = c[0] * b; NC[o + 1] = c[1] * b; NC[o + 2] = c[2] * b;
+    }
+  },
+  planet() {
+    const ta = 0.44, ca = Math.cos(ta), sa = Math.sin(ta), tb = 0.2, cb = Math.cos(tb), sb = Math.sin(tb);
+    for (let j = 0, o = 0; j < N; j++, o += 3) {
+      let x, y, z, r, g, b;
+      if (j < N * 0.5) {
+        const u = Math.random() * 2 - 1, th = Math.random() * 6.2831853, q = Math.sqrt(1 - u * u), R = 0.4;
+        x = q * Math.cos(th) * R; y = u * R; z = q * Math.sin(th) * R;
+        const band = 0.5 + 0.5 * Math.sin(u * 13 + Math.sin(u * 5 + 1) * 1.6);
+        r = 1.0; g = 0.6 + 0.27 * band; b = 0.3 + 0.38 * band;
+      } else {
+        let rr = 0.54 + Math.pow(Math.random(), 0.85) * 0.44; if (rr > 0.745 && rr < 0.785) rr += 0.045;
+        const th = Math.random() * 6.2831853; x = Math.cos(th) * rr; z = Math.sin(th) * rr; y = gauss() * 0.004;
+        const t = (rr - 0.54) / 0.44, s = 0.55 + 0.45 * Math.sin(rr * 90);
+        r = (0.95 - 0.35 * t) * s; g = (0.85 - 0.1 * t) * s; b = (0.7 + 0.3 * t) * s;
+      }
+      const y1 = y * ca - z * sa, z1 = y * sa + z * ca, x2 = x * cb - y1 * sb, y2 = x * sb + y1 * cb;
+      NT[o] = x2; NT[o + 1] = y2; NT[o + 2] = z1;
+      const k = 0.8 + Math.random() * 0.4; NC[o] = r * k; NC[o + 1] = g * k; NC[o + 2] = b * k;
+    }
+  },
+};
+
+// ---------------------------------------------------------------- morphing
+// Particles and targets are both ordered column-by-column, then matched rank to rank,
+// so the crowd flows into the new shape instead of flying at random.
+// (Two linear counting sorts rather than comparison sorts, so a morph costs a few milliseconds, not a dropped beat.)
+const KR_G = 80, KR_YB = 4096, KR_XB = 65536;
+const krKeys = new Uint32Array(N), krTmp = new Uint32Array(N), krCnt = new Uint32Array(Math.max(KR_XB, KR_G * KR_YB) + 1);
+function krSort(idx, xs, ys) {
+  const xr = aspect * 1.7, sxk = (KR_XB - 1) / (2 * xr), syk = (KR_YB - 1) / 3.4, per = N / KR_G;
+  krCnt.fill(0);
+  for (let i = 0; i < N; i++) { let k = ((xs[i] + xr) * sxk) | 0; k = k < 0 ? 0 : k >= KR_XB ? KR_XB - 1 : k; krKeys[i] = k; krCnt[k + 1]++; }
+  for (let k = 0; k < KR_XB; k++) krCnt[k + 1] += krCnt[k];
+  for (let i = 0; i < N; i++) krTmp[krCnt[krKeys[i]]++] = i;                      // krTmp: indices ordered by x
+  krCnt.fill(0);
+  for (let r = 0; r < N; r++) {
+    const i = krTmp[r]; let y = ((ys[i] + 1.7) * syk) | 0; y = y < 0 ? 0 : y >= KR_YB ? KR_YB - 1 : y;
+    const k = ((r / per) | 0) * KR_YB + y; krKeys[i] = k; krCnt[k + 1]++;
+  }
+  for (let k = 0, n = KR_G * KR_YB; k < n; k++) krCnt[k + 1] += krCnt[k];
+  for (let r = 0; r < N; r++) { const i = krTmp[r]; idx[krCnt[krKeys[i]]++] = i; }   // idx: equal-count columns, each ordered by y
+}
+const YOFF = 0.1;
+function morph(new3d, kick) {
+  const now = time, c = Math.cos(rot), s = Math.sin(rot);
+  for (let i = 0, o = 0; i < N; i++, o += 3) {
+    if (now >= SW[i]) {                                        // freeze where this particle is currently anchored
+      if (is3d) {
+        const X = T1[o], Z = T1[o + 2], xr = X * c + Z * s, zr = Z * c - X * s, pp = 2.8 / (2.8 - zr);
+        T0[o] = xr * pp; T0[o + 1] = T1[o + 1] * pp + YOFF; T0[o + 2] = Math.max(0.12, 0.3 + 0.7 * (zr * 0.62 + 0.5));
+      } else { T0[o] = T1[o]; T0[o + 1] = T1[o + 1]; T0[o + 2] = 1; }
+      let m = (now - SW[i]) / 0.9;
+      if (m >= 1) { colA[o] = colB[o]; colA[o + 1] = colB[o + 1]; colA[o + 2] = colB[o + 2]; }
+      else { m = m * m * (3 - 2 * m); for (let k = 0; k < 3; k++) colA[o + k] += (colB[o + k] - colA[o + k]) * m; }
+    }
+    kx[i] = P[o]; ky[i] = P[o + 1];
+    if (new3d) { const X = NT[o], Z = NT[o + 2], xr = X * c + Z * s, zr = Z * c - X * s, pp = 2.8 / (2.8 - zr); qx[i] = xr * pp; qy[i] = NT[o + 1] * pp + YOFF; }
+    else { qx[i] = NT[o]; qy[i] = NT[o + 1]; }
+  }
+  krSort(idxP, kx, ky); krSort(idxT, qx, qy);
+  const sweep = (Math.random() * 3) | 0;
+  for (let k = 0; k < N; k++) {
+    const p = idxP[k], q = Math.random() < 0.05 ? idxT[(Math.random() * N) | 0] : idxT[k], po = p * 3, qo = q * 3;
+    T1[po] = NT[qo]; T1[po + 1] = NT[qo + 1]; T1[po + 2] = NT[qo + 2];
+    colB[po] = NC[qo]; colB[po + 1] = NC[qo + 1]; colB[po + 2] = NC[qo + 2];
+    const d = sweep === 0 ? (P[po] / aspect * 0.5 + 0.5) * 0.55 : sweep === 1 ? Math.hypot(P[po], P[po + 1]) * 0.28 : 0.05;
+    SW[p] = now + Math.max(0, d) + Math.random() * 0.22; misc[p * 2 + 1] = SW[p];
+    const kk = kick || 0.012; V[p * 2] += (Math.random() - 0.5) * kk; V[p * 2 + 1] += (Math.random() - 0.5) * kk;
+  }
+  is3d = new3d;
+  upload(bufA, colA); upload(bufB, colB); upload(bufM, misc);
+  // normalise brightness to the area the shape covers, so a small word and a full-screen photo glow alike
+  const gw = 192, gh = Math.max(8, Math.round(gw / aspect)), grid = new Uint8Array(gw * gh); let occ = 0;
+  for (let k = 0; k < N; k += 2) {
+    const gx = ((qx[k] / aspect * 0.5 + 0.5) * gw) | 0, gy = ((qy[k] * 0.5 + 0.5) * gh) | 0;
+    if (gx >= 0 && gx < gw && gy >= 0 && gy < gh && !grid[gy * gw + gx]) { grid[gy * gw + gx] = 1; occ++; }
+  }
+  const areaPx = occ * (W / gw) * (H / gh);
+  alphaTarget = Math.min(1.1, Math.max(0.03, (new3d ? 0.32 : 0.2) * areaPx / (N * 0.44 * pointSize * pointSize)));
+}
+
+let cur = { type: 'shape', value: 'cloud' };
+function show(desc, kick) {
+  cur = desc; palIndex = (palIndex + 1) % PALETTES.length;
+  let three = false;
+  if (desc.type === 'text') { drawText(desc.value); if (!sample('text')) SHAPES.cloud(); }
+  else if (desc.type === 'image') { drawPicture(desc.img); if (!sample('picture')) SHAPES.cloud(); }
+  else { SHAPES[desc.value](); three = desc.value !== 'cloud'; }
+  morph(three, kick);
+}
+
+// ---------------------------------------------------------------- simulation
+const mouse = { x: 0, y: 0, on: false, down: false, burst: false };
+function step(r) {
+  const c = Math.cos(rot), s = Math.sin(rot), now = time, damp = Math.pow(0.875, r);
+  const mx = mouse.x, my = mouse.y, on = mouse.on, hold = mouse.down, burst = mouse.burst; mouse.burst = false;
+  const R2 = hold ? 1.7 : 0.045;
+  for (let i = 0, o = 0, q = 0; i < N; i++, o += 3, q += 2) {
+    let tx, ty, td;
+    if (now >= SW[i]) {
+      tx = T1[o]; ty = T1[o + 1]; td = 1;
+      if (is3d) { const Z = T1[o + 2], xr = tx * c + Z * s, zr = Z * c - tx * s, pp = 2.8 / (2.8 - zr); tx = xr * pp; ty = ty * pp + YOFF; td = 0.3 + 0.7 * (zr * 0.62 + 0.5); if (td < 0.12) td = 0.12; }
+    } else { tx = T0[o]; ty = T0[o + 1]; td = T0[o + 2]; }
+    let x = P[o], y = P[o + 1], vx = V[q], vy = V[q + 1];
+    const dx = tx - x, dy = ty - y, k = KS[i] * r, w = SWIRL[i];
+    vx += (dx - dy * w) * k; vy += (dy + dx * w) * k;
+    if (on) {
+      const ex = x - mx, ey = y - my, d2 = ex * ex + ey * ey;
+      if (d2 < R2) {
+        const f = 1 - d2 / R2;
+        if (hold) { const g = f * 0.045 * r; vx += (-ex - ey * 1.4) * g; vy += (-ey + ex * 1.4) * g; }
+        else { const g = f * f * 0.0105 * r / Math.sqrt(d2 + 0.0004); vx += ex * g; vy += ey * g; }
+      }
+      if (burst && d2 < 1.2) { const g = (0.02 + 0.03 * Math.random()) * (1.2 - d2) / Math.sqrt(d2 + 0.002); vx += ex * g; vy += ey * g; }
+    }
+    vx *= damp; vy *= damp; x += vx * r; y += vy * r;
+    P[o] = x; P[o + 1] = y; P[o + 2] += (td - P[o + 2]) * 0.12;
+    V[q] = vx; V[q + 1] = vy;
+  }
+}
+function burstAll() { for (let i = 0, q = 0; i < N; i++, q += 2) { const a = Math.random() * 6.2831853, m = 0.01 + Math.random() * 0.05; V[q] += Math.cos(a) * m; V[q + 1] += Math.sin(a) * m; } }
+
+function render(r) {
+  const fade = Math.pow(0.83, r);
+  gl.viewport(0, 0, W, H); gl.enable(gl.BLEND);
+  gl.useProgram(quadProg);
+  gl.bindBuffer(gl.ARRAY_BUFFER, bufQ); gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+  gl.disableVertexAttribArray(1); gl.disableVertexAttribArray(2); gl.disableVertexAttribArray(3);
+  gl.blendEquation(gl.FUNC_ADD); gl.blendFunc(gl.ZERO, gl.SRC_ALPHA);                     // trails: multiply what is there...
+  gl.uniform4f(uQC, 0, 0, 0, fade); gl.drawArrays(gl.TRIANGLES, 0, 3);
+  gl.blendEquation(gl.FUNC_REVERSE_SUBTRACT); gl.blendFunc(gl.ONE, gl.ONE);               // ...and subtract a hair so it reaches true black
+  gl.uniform4f(uQC, 1.3 / 255, 1.3 / 255, 1.3 / 255, 0); gl.drawArrays(gl.TRIANGLES, 0, 3);
+  gl.blendEquation(gl.FUNC_ADD); gl.blendFunc(gl.ONE, gl.ONE);
+  gl.useProgram(ptProg);
+  gl.bindBuffer(gl.ARRAY_BUFFER, bufP); gl.bufferSubData(gl.ARRAY_BUFFER, 0, P); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 0, 0);
+  gl.bindBuffer(gl.ARRAY_BUFFER, bufA); gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 0, 0);
+  gl.bindBuffer(gl.ARRAY_BUFFER, bufB); gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 3, gl.FLOAT, false, 0, 0);
+  gl.bindBuffer(gl.ARRAY_BUFFER, bufM); gl.enableVertexAttribArray(3); gl.vertexAttribPointer(3, 2, gl.FLOAT, false, 0, 0);
+  alphaNow += (alphaTarget - alphaNow) * Math.min(1, 0.06 * r);
+  gl.uniform1f(uTime, time); gl.uniform1f(uAspect, aspect); gl.uniform1f(uSize, pointSize); gl.uniform1f(uAlpha, alphaNow * (1 - fade) / 0.17);
+  gl.drawArrays(gl.POINTS, 0, N);
+}
+
+function resize() {
+  dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const cw = canvas.clientWidth || innerWidth; CH = canvas.clientHeight || innerHeight;
+  const w = Math.max(2, Math.round(cw * dpr)), h = Math.max(2, Math.round(CH * dpr));
+  if (w === W && h === H) return false;
+  W = canvas.width = w; H = canvas.height = h; aspect = W / H;
+  pointSize = dpr * Math.min(3.4, Math.max(1.5, CH / 520));
+  if (aspect >= 1) { sc.width = 1024; sc.height = Math.max(64, Math.round(1024 / aspect)); } else { sc.height = 1024; sc.width = Math.max(64, Math.round(1024 * aspect)); }
+  return true;
+}
+
+// ---------------------------------------------------------------- the opening sequence, until the presenter takes over
+const SEQ = [
+  { type: 'text', value: 'HELLO' }, { type: 'text', value: '100,000' }, { type: 'text', value: 'ONE DOT\nFOR EACH\nOF YOU' },
+  { type: 'shape', value: 'planet' }, { type: 'shape', value: 'heart' }, { type: 'text', value: 'TYPE\nANYTHING' }, { type: 'shape', value: 'helix' },
+];
+let auto = true, autoI = 0, autoT = 0.9;
+function setAuto(v) { auto = v; autoBtn.classList.toggle('on', v); autoBtn.setAttribute('aria-pressed', String(v)); if (v) autoT = 0.2; }
+function fadeHint() { hint.style.opacity = '0'; }
+
+let last = 0;
+function frame(ts) {
+  requestAnimationFrame(frame);
+  const dt = Math.min(0.05, last ? (ts - last) / 1000 : 0.016); last = ts; time += dt;
+  if (resize()) show(cur);
+  if (is3d) rot += dt * 0.6;
+  if (auto && (autoT -= dt) <= 0) { show(SEQ[autoI++ % SEQ.length]); autoT = 4.6; }
+  const r = dt * 60;
+  step(r); render(r);
+}
+
+// ---------------------------------------------------------------- boot
+resize();
+for (let i = 0, o = 0; i < N; i++, o += 3) {
+  P[o] = T1[o] = (Math.random() * 2 - 1) * aspect * 1.08; P[o + 1] = T1[o + 1] = (Math.random() * 2 - 1) * 1.08; P[o + 2] = 1;
+  SW[i] = -10; misc[i * 2] = Math.random(); misc[i * 2 + 1] = -10;
+  KS[i] = 0.014 + 0.05 * Math.random() * Math.random(); SWIRL[i] = 0.1 + 0.24 * Math.random();
+  const k = 0.25 + Math.random() * 0.75; colA[o] = colB[o] = 0.55 * k; colA[o + 1] = colB[o + 1] = 0.68 * k; colA[o + 2] = colB[o + 2] = 1.0 * k;
+}
+bufP = mkBuf(P, gl.DYNAMIC_DRAW); bufA = mkBuf(colA, gl.DYNAMIC_DRAW); bufB = mkBuf(colB, gl.DYNAMIC_DRAW); bufM = mkBuf(misc, gl.DYNAMIC_DRAW);
+alphaNow = alphaTarget = Math.min(1.1, 0.2 * W * H / (N * 0.44 * pointSize * pointSize));
+gl.clearColor(0, 0, 0, 1); gl.clear(gl.COLOR_BUFFER_BIT);
+
+// ---------------------------------------------------------------- input
+const coarse = matchMedia('(pointer: coarse)').matches;
+let typeTimer = 0;
+const typed = () => { const v = input.value.trim(); show(v ? { type: 'text', value: v.toUpperCase() } : { type: 'shape', value: 'cloud' }); };
+input.addEventListener('input', () => { setAuto(false); fadeHint(); clearTimeout(typeTimer); typeTimer = setTimeout(typed, 240); });
+input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); clearTimeout(typeTimer); setAuto(false); typed(); burstAll(); } });
+document.querySelectorAll('.chips button[data-t], .chips button[data-s]').forEach(b => b.addEventListener('click', () => {
+  setAuto(false); fadeHint();
+  if (b.dataset.t) { input.value = b.dataset.t; show({ type: 'text', value: b.dataset.t }); }
+  else { input.value = ''; show({ type: 'shape', value: b.dataset.s }); }
+  if (!coarse) input.focus({ preventScroll: true });
+}));
+autoBtn.addEventListener('click', () => { setAuto(!auto); if (!coarse) input.focus({ preventScroll: true }); });
+
+function setMouse(e) { const b = canvas.getBoundingClientRect(); mouse.x = ((e.clientX - b.left) / b.width * 2 - 1) * aspect; mouse.y = -((e.clientY - b.top) / b.height * 2 - 1); mouse.on = true; }
+const release = () => { if (mouse.down) { mouse.down = false; mouse.burst = true; } };
+canvas.addEventListener('pointermove', setMouse);
+canvas.addEventListener('pointerdown', e => { setMouse(e); mouse.down = true; fadeHint(); try { canvas.setPointerCapture(e.pointerId); } catch (_) {} });
+canvas.addEventListener('pointerup', e => { release(); if (e.pointerType !== 'mouse') setTimeout(() => { mouse.on = false; }, 60); });
+canvas.addEventListener('pointercancel', release);
+canvas.addEventListener('pointerleave', () => { if (!mouse.down) mouse.on = false; });
+canvas.addEventListener('mousedown', e => e.preventDefault());            // keep the caret in the text field
+
+function loadImageFile(f) {
+  if (!f || !/^image\//.test(f.type)) return;
+  const img = new Image(), url = URL.createObjectURL(f);
+  img.onload = () => { URL.revokeObjectURL(url); setAuto(false); fadeHint(); input.value = ''; show({ type: 'image', img }); };
+  img.src = url;
+}
+addEventListener('dragover', e => e.preventDefault());
+addEventListener('drop', e => { e.preventDefault(); loadImageFile(e.dataTransfer && e.dataTransfer.files[0]); });
+addEventListener('paste', e => { const f = Array.from((e.clipboardData && e.clipboardData.files) || []).find(x => /^image\//.test(x.type)); if (f) { e.preventDefault(); loadImageFile(f); } });
+$('pic').addEventListener('click', () => fileIn.click());
+fileIn.addEventListener('change', () => { loadImageFile(fileIn.files[0]); fileIn.value = ''; });
+
+if (!coarse) {
+  input.focus({ preventScroll: true });
+  addEventListener('focus', () => input.focus({ preventScroll: true }));
+  addEventListener('keydown', e => { if (document.activeElement !== input && e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) input.focus({ preventScroll: true }); });
+}
+setTimeout(fadeHint, 16000);
+
+// presenter hub bridge: these keys travel up to the page that framed this act
+addEventListener('keydown', e => {
+  const m = e.key === 'PageDown' || (e.shiftKey && e.key === 'ArrowRight') ? 'next' : e.key === 'PageUp' || (e.shiftKey && e.key === 'ArrowLeft') ? 'prev' : e.key === 'Escape' ? 'menu' : '';
+  if (m && parent !== window) { e.preventDefault(); e.stopPropagation(); parent.postMessage({ sit: m }, '*'); }
+}, true);
+
+window.__crowd = { show, setAuto, mouse, stats: () => ({ alphaNow, alphaTarget, pointSize, W, H, is3d }) };
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

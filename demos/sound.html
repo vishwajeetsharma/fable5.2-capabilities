@@ -1,0 +1,346 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Sound · music that writes itself</title>
+<style>
+:root { color-scheme: dark; --ink: #f1f2fa; --dim: rgba(241,242,250,.66); --line: rgba(241,242,250,.2); --glass: rgba(8,9,18,.6); --hot: #ffd27a; }
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: #05060c; color: var(--ink);
+  font: 14px/1.4 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; }
+canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: pointer; }
+.tag { position: fixed; left: max(20px, env(safe-area-inset-left)); top: max(18px, env(safe-area-inset-top)); display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+  pointer-events: none; text-transform: uppercase; letter-spacing: .2em; font-size: 11px; color: var(--dim); }
+.tag b { color: var(--ink); font-weight: 600; }
+.now { position: fixed; right: max(20px, env(safe-area-inset-right)); top: max(16px, env(safe-area-inset-top)); text-align: right; pointer-events: none;
+  font: 500 13px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; letter-spacing: .04em; }
+.now small { display: block; font: 11px/1.4 ui-sans-serif, system-ui, sans-serif; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); }
+.now b { font-size: 22px; font-weight: 600; }
+.dock { position: fixed; left: 0; right: 0; bottom: max(18px, env(safe-area-inset-bottom)); display: flex; flex-direction: column; align-items: center; gap: 11px;
+  padding: 0 max(16px, env(safe-area-inset-right)) 0 max(16px, env(safe-area-inset-left)); pointer-events: none; }
+.dock > * { pointer-events: auto; }
+.hint { margin: 0; text-align: center; font-size: 12.5px; letter-spacing: .03em; pointer-events: none; transition: opacity 1.4s; color: var(--dim); }
+.row { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px; }
+.seg { display: flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; background: var(--glass); }
+.seg button { border: 0; border-radius: 0; background: transparent; }
+button { appearance: none; border: 1px solid var(--line); background: var(--glass); color: var(--ink); padding: 8px 14px; border-radius: 999px; font: inherit; font-size: 12.5px; letter-spacing: .04em; cursor: pointer; }
+button:hover { border-color: rgba(241,242,250,.55); }
+button:focus-visible { outline: 2px solid var(--hot); outline-offset: 2px; }
+button.on { background: var(--ink); color: #070914; border-color: var(--ink); }
+#begin { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(210px, 46vmin); aspect-ratio: 1; border-radius: 50%; font-size: 15px; letter-spacing: .14em; text-transform: uppercase;
+  border: 1px solid rgba(241,242,250,.6); background: radial-gradient(circle at 50% 40%, rgba(255,210,122,.3), rgba(8,9,18,.75) 70%); animation: breathe 2.6s ease-in-out infinite; }
+@keyframes breathe { 50% { box-shadow: 0 0 0 16px rgba(255,210,122,.07), 0 0 70px rgba(255,210,122,.3); } }
+@media (prefers-reduced-motion: reduce) { #begin { animation: none; } }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="tag"><b>VI</b><span>Sound</span><span>no samples, no recordings, every wave computed live</span></div>
+<div class="now" id="now" hidden><small id="nowMood">pulse &middot; 118 bpm</small><b id="chord">Am7</b><small id="bar">bar 1</small></div>
+<button type="button" id="begin">tap to begin</button>
+<div class="dock">
+  <p class="hint" id="hint">It composes as it goes. Play along on the keys A to L, or tap the rings: every note you add loops, and none can be wrong.</p>
+  <div class="row">
+    <div class="seg" role="group" aria-label="Mood">
+      <button type="button" data-mood="dawn">dawn</button><button type="button" data-mood="drift">drift</button><button type="button" data-mood="pulse" class="on">pulse</button>
+    </div>
+    <button type="button" id="clear">clear my notes</button>
+    <button type="button" id="mute">pause</button>
+  </div>
+</div>
+<script>
+(() => {
+'use strict';
+const $ = id => document.getElementById(id);
+const canvas = $('c'), g2 = canvas.getContext('2d'), hint = $('hint');
+const SCALES = { major: [0, 2, 4, 5, 7, 9, 11], minor: [0, 2, 3, 5, 7, 8, 10] }, PENT = { major: [0, 1, 2, 4, 5], minor: [0, 2, 3, 4, 6] };
+const MOODS = {
+  dawn: { label: 'dawn', bpm: 72, root: 62, scale: 'major', prog: [0, 5, 3, 4], swing: 0, hue: 36, names: ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'] },
+  drift: { label: 'drift', bpm: 84, root: 53, scale: 'minor', prog: [0, 3, 5, 4], swing: 0.14, hue: 268, names: ['C', 'D♭', 'D', 'E♭', 'E', 'F', 'G♭', 'G', 'A♭', 'A', 'B♭', 'B'] },
+  pulse: { label: 'pulse', bpm: 118, root: 57, scale: 'minor', prog: [0, 5, 2, 6], swing: 0, hue: 192, names: ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'] },
+};
+const mtof = m => 440 * Math.pow(2, (m - 69) / 12);
+const rnd = a => a[(Math.random() * a.length) | 0];
+
+// ---------------------------------------------------------------- the instrument: built on any audio context, so the same code can be rendered offline and measured
+function makeEngine(ac, moodName) {
+  const E = { ac, mood: MOODS[moodName], next: null, step: 0, t: 0, bar0: 0, pat: null, user: Array.from({ length: 64 }, () => []), stepT: 0, stepI: 0, chordName: '', pads: null };
+  const gain = (v, to) => { const n = ac.createGain(); n.gain.value = v; if (to) n.connect(to); return n; };
+  const pan = (p, to) => { if (!ac.createStereoPanner) return to; const n = ac.createStereoPanner(); n.pan.value = p; n.connect(to); return n; };
+  // master chain: glue compressor, then a soft clipper so nothing can ever hit the speakers square
+  const master = gain(0.9), comp = ac.createDynamicsCompressor(), clip = ac.createWaveShaper(), outG = gain(0.85);
+  comp.threshold.value = -17; comp.knee.value = 14; comp.ratio.value = 5; comp.attack.value = 0.004; comp.release.value = 0.22;
+  { const c = new Float32Array(1025), k = Math.tanh(1.3); for (let i = 0; i < 1025; i++) c[i] = Math.tanh(1.3 * (i / 512 - 1)) / k; clip.curve = c; }
+  master.connect(comp); comp.connect(clip); clip.connect(outG); outG.connect(ac.destination);
+  E.out = outG; E.master = master;
+  // a hall, made from three seconds of decaying noise
+  const conv = ac.createConvolver(), rev = gain(1, conv);
+  { const n = Math.floor(ac.sampleRate * 3.2), b = ac.createBuffer(2, n, ac.sampleRate);
+    for (let ch = 0; ch < 2; ch++) { const d = b.getChannelData(ch); let lp = 0; for (let i = 0; i < n; i++) { const t = i / n; lp += ((Math.random() * 2 - 1) * Math.pow(1 - t, 2.6) - lp) * (0.55 - 0.45 * t); d[i] = lp * (i < 500 ? i / 500 : 1); } }
+    conv.buffer = b; const ro = gain(0.42, master); conv.connect(ro); }
+  // ping-pong echo, timed to the beat
+  const dL = ac.createDelay(1.5), dR = ac.createDelay(1.5), fb = gain(0.34), fbf = ac.createBiquadFilter(), del = gain(1, dL), merge = ac.createChannelMerger(2), delOut = gain(0.5, master);
+  fbf.type = 'lowpass'; fbf.frequency.value = 2600; dL.connect(dR); dR.connect(fbf); fbf.connect(fb); fb.connect(dL); dL.connect(merge, 0, 0); dR.connect(merge, 0, 1); merge.connect(delOut);
+  const bus = (level, r, d) => { const b = gain(level, master); if (r) b.connect(gain(r, rev)); if (d) b.connect(gain(d, del)); return b; };     // level, reverb send, echo send
+  const padF = ac.createBiquadFilter(); padF.type = 'lowpass'; padF.frequency.value = 900; padF.Q.value = 0.6;
+  const duck = gain(1, padF), padBus = bus(0.95, 0.55, 0); padF.connect(padBus);
+  { const lfo = ac.createOscillator(), lg = gain(260, padF.frequency); lfo.frequency.value = 0.07; lfo.connect(lg); lfo.start(); }
+  const bassBus = bus(0.62, 0, 0), pluckBus = bus(0.5, 0.25, 0.34), bellBus = bus(0.62, 0.5, 0.3), drumBus = bus(0.85, 0, 0), airBus = bus(0.7, 0.3, 0), youBus = bus(0.72, 0.45, 0.28);
+  const noise = ac.createBuffer(1, ac.sampleRate, ac.sampleRate); { const d = noise.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1; }
+
+  // ---- voices
+  function bell(t, m, vel, p, to, ratio, dec) {                      // FM: one sine bending the pitch of another makes the glassy overtones
+    const f = mtof(m), car = ac.createOscillator(), mod = ac.createOscillator(), mg = ac.createGain(), g = ac.createGain();
+    car.frequency.value = f; mod.frequency.value = f * ratio;
+    mg.gain.setValueAtTime(f * 2.0 * vel, t); mg.gain.exponentialRampToValueAtTime(f * 0.04, t + 0.45);
+    mod.connect(mg); mg.connect(car.frequency);
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.17 * vel, t + 0.006); g.gain.exponentialRampToValueAtTime(0.0001, t + dec);
+    car.connect(g); g.connect(pan(p, to)); car.start(t); mod.start(t); car.stop(t + dec + 0.05); mod.stop(t + dec + 0.05);
+  }
+  function pluck(t, m, vel, p) {
+    const f = mtof(m), o1 = ac.createOscillator(), o2 = ac.createOscillator(), fl = ac.createBiquadFilter(), g = ac.createGain();
+    o1.type = 'sawtooth'; o2.type = 'square'; o1.frequency.value = f; o2.frequency.value = f * 0.5; o2.detune.value = 6;
+    fl.type = 'lowpass'; fl.Q.value = 2.2; fl.frequency.setValueAtTime(Math.min(5200, f * 7), t); fl.frequency.exponentialRampToValueAtTime(Math.max(300, f * 1.4), t + 0.2);
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.2 * vel, t + 0.004); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.3);
+    o1.connect(fl); o2.connect(gain(0.35, fl)); fl.connect(g); g.connect(pan(p, pluckBus));
+    o1.start(t); o2.start(t); o1.stop(t + 0.34); o2.stop(t + 0.34);
+  }
+  function bass(t, m, dur, vel) {
+    const f = mtof(m), o1 = ac.createOscillator(), o2 = ac.createOscillator(), fl = ac.createBiquadFilter(), g = ac.createGain();
+    o2.type = 'triangle'; o1.frequency.value = f; o2.frequency.value = f * 2; fl.type = 'lowpass'; fl.frequency.value = 520;
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.5 * vel, t + 0.012); g.gain.setValueAtTime(0.5 * vel, t + Math.max(0.02, dur - 0.05)); g.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.06);
+    o1.connect(g); o2.connect(gain(0.3, fl)); fl.connect(g); g.connect(bassBus); o1.start(t); o2.start(t); o1.stop(t + dur + 0.1); o2.stop(t + dur + 0.1);
+  }
+  function pad(t, notes) {
+    if (E.pads) for (const v of E.pads) { v.g.gain.cancelScheduledValues(t); v.g.gain.setTargetAtTime(0, t, 0.55); v.o.forEach(o => o.stop(t + 3.5)); }
+    E.pads = notes.map((m, i) => {
+      const g = ac.createGain(), o = [-7, 7, 0].map((c, k) => { const x = ac.createOscillator(); x.type = k < 2 ? 'sawtooth' : 'triangle'; x.frequency.value = mtof(m) * (k < 2 ? 1 : 2); x.detune.value = c; x.connect(k < 2 ? g : gain(0.4, g)); x.start(t); return x; });
+      g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.05, t + 0.9); g.connect(pan((i / (notes.length - 1) - 0.5) * 0.9, duck));
+      return { g, o };
+    });
+  }
+  function kick(t, vel) {
+    const o = ac.createOscillator(), g = ac.createGain();
+    o.frequency.setValueAtTime(150, t); o.frequency.exponentialRampToValueAtTime(46, t + 0.11);
+    g.gain.setValueAtTime(0.9 * vel, t); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.34); o.connect(g); g.connect(drumBus); o.start(t); o.stop(t + 0.36);
+    duck.gain.cancelScheduledValues(t); duck.gain.setValueAtTime(1, t); duck.gain.linearRampToValueAtTime(1 - 0.5 * vel, t + 0.012); duck.gain.setTargetAtTime(1, t + 0.05, 0.11);   // the pad ducks under each kick
+  }
+  function hiss(t, vel, len, hp, to, type, q) {
+    const s = ac.createBufferSource(), f = ac.createBiquadFilter(), g = ac.createGain();
+    s.buffer = noise; f.type = type || 'highpass'; f.frequency.value = hp; if (q) f.Q.value = q;
+    g.gain.setValueAtTime(vel, t); g.gain.exponentialRampToValueAtTime(0.0001, t + len); s.connect(f); f.connect(g); g.connect(to); s.start(t, Math.random() * 0.5); s.stop(t + len + 0.02);
+  }
+  const hat = (t, vel, open) => hiss(t, 0.22 * vel, open ? 0.2 : 0.045, 7600, drumBus);
+  const clap = (t, vel) => { for (let k = 0; k < 3; k++) hiss(t + k * 0.011, 0.34 * vel, k < 2 ? 0.02 : 0.2, 1700, airBus, 'bandpass', 0.9); };
+
+  // ---- harmony
+  const deg = k => { const sc = SCALES[E.mood.scale]; return sc[((k % 7) + 7) % 7] + 12 * Math.floor(k / 7); };
+  const chordTones = d => [0, 2, 4, 6].map(k => E.mood.root + deg(d + k));
+  const fold = (m, lo) => { while (m < lo) m += 12; while (m >= lo + 12) m -= 12; return m; };
+  const ladder = i => { const p = PENT[E.mood.scale]; return E.mood.root + deg(p[i % 5]) + 12 * Math.floor(i / 5); };          // the only notes you can play: always in key
+  function nameOf(d) {
+    const t = chordTones(d), third = t[1] - t[0], fifth = t[2] - t[0], sev = t[3] - t[0];
+    return E.mood.names[((t[0] % 12) + 12) % 12] + (fifth === 6 ? 'm7♭5' : third === 3 ? 'm7' : sev === 11 ? 'maj7' : '7');
+  }
+  // ---- composition: four bars of patterns, rewritten a little every other cycle
+  function compose() {
+    const m = E.mood, P = { arp: [], mel: new Array(64).fill(-1), bass: [], kick: [], clap: [], hat: [] };
+    const shapes = m.label === 'pulse' ? [[0, 2, 1, 3, 4, 2, 3, 1, 0, 2, 1, 3, 5, 3, 4, 2], [0, 1, 2, 3, 4, 3, 2, 1, 0, 1, 2, 3, 5, 4, 3, 2], [0, 2, 4, 2, 1, 3, 5, 3, 0, 2, 4, 2, 1, 3, 4, 6]]
+      : m.label === 'drift' ? [[0, -1, 2, -1, 3, -1, 2, -1, 1, -1, 2, -1, 4, -1, 2, -1], [0, -1, 1, -1, 2, -1, 4, -1, 3, -1, 2, -1, 1, -1, -1, -1]]
+      : [[0, -1, -1, -1, 2, -1, -1, -1, 3, -1, -1, -1, 4, -1, -1, -1], [0, -1, -1, -1, -1, -1, 2, -1, 4, -1, -1, -1, 3, -1, -1, -1]];
+    const shape = rnd(shapes);
+    for (let b = 0; b < 4; b++) P.arp.push(b === 3 && Math.random() < 0.5 ? shape.slice().reverse() : shape);
+    const rhythms = m.label === 'pulse' ? [[0, 6, 8, 12, 16, 22, 24, 28], [0, 3, 6, 8, 14, 16, 19, 22, 24], [0, 4, 6, 12, 16, 20, 22, 28]] : m.label === 'drift' ? [[0, 6, 10, 16, 24, 28], [2, 8, 12, 18, 24]] : [[0, 8, 12, 20, 28], [4, 12, 16, 26]];
+    const rh = rnd(rhythms); let idx = 5 + ((Math.random() * 3) | 0); const first = [];
+    for (const s of rh) { idx = Math.max(3, Math.min(10, idx + rnd([-2, -1, -1, 0, 1, 1, 2]))); first.push(idx); P.mel[s] = idx; }
+    rh.forEach((s, k) => { P.mel[32 + s] = k >= rh.length - 2 ? Math.max(3, Math.min(10, first[k] + rnd([-1, 1, 2]))) : first[k]; });     // second phrase answers the first
+    for (let b = 0; b < 4; b++) {
+      P.bass.push(m.label === 'pulse' ? [0, 2, 4, 6, 8, 10, 12, 14].map(s => [s, s % 4 === 2 ? 12 : 0, 1.6]) : m.label === 'drift' ? [[0, 0, 5], [6, 0, 3], [10, 7, 5]] : [[0, 0, 15]]);
+      P.kick.push(m.label === 'pulse' ? [0, 4, 8, 12] : m.label === 'drift' ? (b === 3 ? [0, 7, 10, 14] : [0, 7, 10]) : [0]);
+      P.clap.push(m.label === 'dawn' ? [] : [4, 12]);
+      P.hat.push(m.label === 'pulse' ? [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] : m.label === 'drift' ? [0, 2, 4, 6, 8, 10, 12, 14] : [4, 12]);
+    }
+    E.pat = P;
+  }
+  function setMood(name, now) { E.next = MOODS[name]; if (now) { E.mood = E.next; E.next = null; E.bar0 = Math.floor(E.step / 16); compose(); } }
+
+  // ---- one sixteenth note
+  function playStep(s, t) {
+    const s16 = s & 15;
+    if (s16 === 0 && E.next) { E.mood = E.next; E.next = null; E.bar0 = s >> 4; compose(); }
+    if (s16 === 0 && (s & 63) === 0 && ((s >> 6) & 1) === 0 && s > 0) compose();
+    const m = E.mood, P = E.pat, spb = 60 / m.bpm / 4, bar = (s >> 4) & 3, since = (s >> 4) - E.bar0, d = m.prog[bar], tones = chordTones(d);
+    dL.delayTime.setValueAtTime(spb * 3, t); dR.delayTime.setValueAtTime(spb * 3, t);
+    if (s16 === 0) {
+      pad(t, tones.map(x => fold(x, m.root - 3)));
+      padF.frequency.setTargetAtTime(m.label === 'pulse' ? Math.min(1900, 600 + since * 220) : m.label === 'drift' ? 900 : 1300, t, 0.8);
+    }
+    const quiet = m.label === 'dawn';
+    if (since >= (quiet ? 1 : 2)) for (const [bs, off, len] of P.bass[bar]) if (bs === s16) bass(t, fold(tones[0], 36) + off, len * spb, quiet ? 0.5 : off ? 0.7 : 1);
+    if (since >= 1) {
+      const a = P.arp[bar][s16];
+      if (a >= 0) { const lad = tones.concat(tones.map(x => x + 12)).map(x => fold(x, m.root + 5) + (x - tones[0] >= 12 ? 12 : 0)).sort((x, y) => x - y); pluck(t, lad[a % lad.length], (since === 1 ? 0.5 : 0.8) * (s16 % 4 === 0 ? 1 : 0.72), ((s16 % 4) - 1.5) * 0.3); }
+    }
+    if (since >= (quiet ? 2 : 4)) { const ml = P.mel[s & 63]; if (ml >= 0) bell(t, ladder(ml), 0.85, 0.15, bellBus, 3.007, quiet ? 3.0 : 2.0); }
+    if (since >= 2) for (const h of P.hat[bar]) if (h === s16) hat(t, quiet ? 0.5 : (s16 % 4 === 2 ? 1 : s16 % 2 ? 0.4 : 0.65), !quiet && m.label === 'pulse' && s16 % 4 === 2);
+    if (since >= (quiet ? 4 : 4)) {
+      for (const k of P.kick[bar]) if (k === s16) kick(t, quiet ? 0.4 : m.label === 'drift' ? 0.8 : 1);
+      for (const k of P.clap[bar]) if (k === s16) clap(t, m.label === 'drift' ? 0.7 : 1);
+    }
+    for (const u of E.user[s & 63]) bell(t, ladder(u), 0.95, -0.2, youBus, 2, 1.6);
+    E.chordName = nameOf(d);
+  }
+  E.advance = until => {                                         // schedule every step that starts before "until"
+    while (E.t < until) {
+      const spb = 60 / E.mood.bpm / 4;
+      playStep(E.step, E.t + (E.mood.swing && (E.step & 1) ? spb * E.mood.swing : 0));
+      E.stepT = E.t; E.stepI = E.step; E.t += spb; E.step++;
+    }
+  };
+  E.pos = now => E.stepI + (now - E.stepT) / (60 / E.mood.bpm / 4);        // where the playhead is, in steps
+  E.touch = (i, now) => { bell(now + 0.01, ladder(i), 1, -0.2, youBus, 2, 1.6); const q = ((Math.round(E.pos(now)) % 64) + 64) % 64, slot = E.user[q]; if (slot.indexOf(i) < 0 && slot.length < 3) slot.push(i); return q; };
+  E.setMood = setMood; E.ladder = ladder; E.chordTones = chordTones;
+  compose();
+  return E;
+}
+
+// ---------------------------------------------------------------- live state
+let ac = null, eng = null, analyser = null, freq = null, playing = false, moodName = 'pulse', ticker = 0;
+function begin() {
+  if (ac) return;
+  ac = new (window.AudioContext || window.webkitAudioContext)();
+  eng = makeEngine(ac, moodName); analyser = ac.createAnalyser(); analyser.fftSize = 1024; analyser.smoothingTimeConstant = 0.78; eng.out.connect(analyser); freq = new Uint8Array(analyser.frequencyBinCount);
+  eng.master.gain.setValueAtTime(0.0001, ac.currentTime); eng.master.gain.exponentialRampToValueAtTime(0.9, ac.currentTime + 1.2);
+  eng.t = ac.currentTime + 0.08; playing = true; ac.resume();
+  ticker = setInterval(() => { if (playing && ac.state === 'running') eng.advance(ac.currentTime + 0.16); }, 30);
+  $('begin').hidden = true; $('now').hidden = false; syncUI();
+}
+function setPlaying(v) { if (!ac) return begin(); playing = v; if (v) { eng.t = Math.max(eng.t, ac.currentTime + 0.05); ac.resume(); } else ac.suspend(); syncUI(); }
+function syncUI() {
+  document.querySelectorAll('[data-mood]').forEach(b => b.classList.toggle('on', b.dataset.mood === moodName));
+  $('mute').textContent = playing || !ac ? 'pause' : 'play'; $('mute').classList.toggle('on', !!ac && !playing);
+}
+function pickMood(name) { moodName = name; if (eng) eng.setMood(name, false); else begin(); syncUI(); }
+document.querySelectorAll('[data-mood]').forEach(b => b.addEventListener('click', () => pickMood(b.dataset.mood)));
+$('begin').addEventListener('click', begin);
+$('mute').addEventListener('click', () => setPlaying(!playing));
+$('clear').addEventListener('click', () => { if (eng) eng.user.forEach(s => { s.length = 0; }); });
+document.addEventListener('visibilitychange', () => { if (!ac) return; if (document.hidden) ac.suspend(); else if (playing) { eng.t = Math.max(eng.t, ac.currentTime + 0.05); ac.resume(); } });
+
+// ---------------------------------------------------------------- the score, drawn as a clock: one turn is four bars
+let W = 0, H = 0, dpr = 1, cx = 0, cy = 0, R = 100, hueNow = 192, level = 0, lastPos = 0;
+const ripples = [], sparks = [];
+const RING = [{ name: 'drums', r: 0.36 }, { name: 'bass', r: 0.5 }, { name: 'arp', r: 0.64 }, { name: 'melody', r: 0.8 }, { name: 'you', r: 0.96 }];
+function fit() {
+  dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const cw = canvas.clientWidth || innerWidth, ch = canvas.clientHeight || innerHeight, w = Math.round(cw * dpr), h = Math.round(ch * dpr);
+  if (w !== W || h !== H) { W = canvas.width = w; H = canvas.height = h; }
+  cx = W / 2; cy = H * 0.47; R = Math.min(W * 0.46, H * 0.385);
+}
+const ang = s => s / 64 * 6.2831853 - 1.5707963;
+function bead(step, rr, size, hue, pos, light) {
+  let d = pos - step; d = ((d % 64) + 64) % 64;                       // how long ago the playhead passed
+  const hit = d < 9 ? Math.exp(-d * 0.6) : 0, a = ang(step), x = cx + Math.cos(a) * rr, y = cy + Math.sin(a) * rr;
+  g2.fillStyle = `hsla(${hue},88%,${light + hit * 30}%,${0.8 + hit * 0.2})`;
+  g2.beginPath(); g2.arc(x, y, size * 1.3 * (1 + hit * 1.5) * dpr, 0, 6.2832); g2.fill();
+  if (hit > 0.05) { g2.strokeStyle = `hsla(${hue},90%,75%,${hit * 0.55})`; g2.lineWidth = 1.5 * dpr; g2.beginPath(); g2.arc(x, y, (size + d * 5.5) * dpr, 0, 6.2832); g2.stroke(); }
+}
+function draw(now) {
+  fit();
+  const m = eng ? eng.mood : MOODS[moodName], pos = eng && ac ? eng.pos(ac.currentTime) : (now / 1000) * 2.2, pm = ((pos % 64) + 64) % 64, bar = Math.floor(pm / 16);
+  let lo = 0, mid = 0;
+  if (analyser) { analyser.getByteFrequencyData(freq); for (let i = 1; i < 7; i++) lo += freq[i]; lo /= 6 * 255; for (let i = 12; i < 80; i++) mid += freq[i]; mid /= 68 * 255; }
+  level += (lo - level) * 0.35;
+  const targetHue = (m.hue + [0, 26, -22, 44][bar]) % 360; hueNow += ((((targetHue - hueNow) % 360) + 540) % 360 - 180) * 0.04;
+  g2.setTransform(1, 0, 0, 1, 0, 0); g2.globalCompositeOperation = 'source-over';
+  const bg = g2.createRadialGradient(cx, cy, 0, cx, cy, Math.max(W, H) * 0.75);
+  bg.addColorStop(0, `hsl(${hueNow},55%,${9 + level * 9}%)`); bg.addColorStop(0.45, `hsl(${hueNow + 24},50%,5%)`); bg.addColorStop(1, '#030308');
+  g2.fillStyle = bg; g2.fillRect(0, 0, W, H);
+  // rings and their names
+  g2.lineWidth = dpr; g2.font = `${10.5 * dpr}px ui-sans-serif, system-ui, sans-serif`; g2.textAlign = 'center';
+  for (const ring of RING) { g2.strokeStyle = 'rgba(241,242,250,0.11)'; g2.beginPath(); g2.arc(cx, cy, R * ring.r, 0, 6.2832); g2.stroke(); }
+  for (let b = 0; b < 4; b++) { const a = ang(b * 16); g2.strokeStyle = 'rgba(241,242,250,0.14)'; g2.beginPath(); g2.moveTo(cx + Math.cos(a) * R * 0.3, cy + Math.sin(a) * R * 0.3); g2.lineTo(cx + Math.cos(a) * R * 1.02, cy + Math.sin(a) * R * 1.02); g2.stroke(); }
+  g2.globalCompositeOperation = 'lighter';
+  if (eng) {
+    const P = eng.pat, since = Math.floor(eng.stepI / 16) - eng.bar0, quiet = m.label === 'dawn';
+    for (let b = 0; b < 4; b++) {
+      const o = b * 16;
+      if (since >= 4) { for (const k of P.kick[b]) bead(o + k, R * 0.33, 4.2, 0, pm, 78); for (const k of P.clap[b]) bead(o + k, R * 0.36, 3, 330, pm, 70); }
+      if (since >= 2) for (const k of P.hat[b]) bead(o + k, R * 0.39, 1.5, 200, pm, 72);
+      if (since >= (quiet ? 1 : 2)) for (const [k, off] of P.bass[b]) bead(o + k, R * (0.5 + (off ? 0.02 : -0.01)), 3.4, 228, pm, 62);
+      if (since >= 1) P.arp[b].forEach((a, k) => { if (a >= 0) bead(o + k, R * (0.6 + a * 0.013), 2.3, 186, pm, 62); });
+    }
+    if (since >= (quiet ? 2 : 4)) P.mel.forEach((i, s) => { if (i >= 0) bead(s, R * (0.75 + (i - 3) * 0.012), 3.4, 40, pm, 64); });
+    eng.user.forEach((slot, s) => slot.forEach(i => bead(s, R * (0.9 + i * 0.011), 4, 322, pm, 68)));
+    // sparks fly when the melody or your own notes sound
+    const crossed = s => { let d = pm - s; d = ((d % 64) + 64) % 64; let d0 = lastPos - s; d0 = ((d0 % 64) + 64) % 64; return d < 2 && d0 > 60; };
+    P.mel.forEach((i, s) => { if (i >= 0 && since >= 4 && crossed(s)) burst(s, R * 0.8, 40, 6); });
+    eng.user.forEach((slot, s) => { if (slot.length && crossed(s)) burst(s, R * 0.96, 322, 9); });
+    lastPos = pm;
+  }
+  // playhead
+  const pa = ang(pm), grad = g2.createLinearGradient(cx, cy, cx + Math.cos(pa) * R * 1.05, cy + Math.sin(pa) * R * 1.05);
+  grad.addColorStop(0, 'rgba(255,255,255,0)'); grad.addColorStop(0.3, 'rgba(255,255,255,0.5)'); grad.addColorStop(1, 'rgba(255,255,255,0.95)');
+  g2.strokeStyle = grad; g2.lineWidth = 1.6 * dpr; g2.beginPath(); g2.moveTo(cx + Math.cos(pa) * R * 0.27, cy + Math.sin(pa) * R * 0.27); g2.lineTo(cx + Math.cos(pa) * R * 1.05, cy + Math.sin(pa) * R * 1.05); g2.stroke();
+  for (let k = 1; k < 14; k++) { const a = pa - k * 0.022; g2.strokeStyle = `rgba(255,255,255,${0.1 * (1 - k / 14)})`; g2.beginPath(); g2.moveTo(cx + Math.cos(a) * R * 0.3, cy + Math.sin(a) * R * 0.3); g2.lineTo(cx + Math.cos(a) * R * 1.03, cy + Math.sin(a) * R * 1.03); g2.stroke(); }
+  // spectrum corona and the orb that breathes with the bass
+  if (analyser) for (let i = 0; i < 72; i++) {
+    const bin = Math.floor(2 + Math.pow(i / 72, 1.8) * 300), v = freq[bin] / 255, a = i / 72 * 6.2831853 - 1.5707963, r0 = R * 0.2, r1 = r0 + v * v * R * 0.11;
+    g2.strokeStyle = `hsla(${hueNow + i * 1.4},85%,66%,${0.25 + v * 0.6})`; g2.lineWidth = 2.2 * dpr; g2.beginPath(); g2.moveTo(cx + Math.cos(a) * r0, cy + Math.sin(a) * r0); g2.lineTo(cx + Math.cos(a) * r1, cy + Math.sin(a) * r1); g2.stroke();
+  }
+  const orbR = R * (0.15 + level * 0.05), og = g2.createRadialGradient(cx, cy, 0, cx, cy, orbR * 2.2);
+  og.addColorStop(0, `hsla(${hueNow + 20},95%,${72 + level * 20}%,0.95)`); og.addColorStop(0.4, `hsla(${hueNow},90%,55%,0.42)`); og.addColorStop(1, 'rgba(0,0,0,0)');
+  g2.fillStyle = og; g2.beginPath(); g2.arc(cx, cy, orbR * 2.2, 0, 6.2832); g2.fill();
+  for (let i = ripples.length - 1; i >= 0; i--) { const r = ripples[i]; r.a += 0.022; if (r.a >= 1) { ripples.splice(i, 1); continue; } g2.strokeStyle = `hsla(322,90%,72%,${(1 - r.a) * 0.8})`; g2.lineWidth = 2 * dpr; g2.beginPath(); g2.arc(r.x, r.y, (8 + r.a * 90) * dpr, 0, 6.2832); g2.stroke(); }
+  for (let i = sparks.length - 1; i >= 0; i--) { const s = sparks[i]; s.x += s.vx; s.y += s.vy; s.l -= 0.022; if (s.l <= 0) { sparks.splice(i, 1); continue; } g2.fillStyle = `hsla(${s.h},90%,72%,${s.l})`; g2.beginPath(); g2.arc(s.x, s.y, 1.7 * dpr, 0, 6.2832); g2.fill(); }
+  g2.globalCompositeOperation = 'source-over';
+  g2.fillStyle = 'rgba(241,242,250,0.62)'; g2.textAlign = 'center';                                  // ring names sit between the rings, clear of the notes
+  RING.forEach((ring, k) => g2.fillText(ring.name, cx + R * (ring.r - 0.07), cy + 14 * dpr));
+  if (eng) {
+    $('chord').textContent = eng.chordName; $('nowMood').textContent = `${m.label} · ${m.bpm} bpm`;
+    $('bar').textContent = 'bar ' + (Math.floor(Math.max(0, pos) / 16) + 1);
+  }
+}
+function burst(step, rr, hue, n) { if (sparks.length > 260) return; const a = ang(step), x = cx + Math.cos(a) * rr, y = cy + Math.sin(a) * rr; for (let k = 0; k < n; k++) { const b = a + (Math.random() - 0.5) * 1.6, v = (0.8 + Math.random() * 2.2) * dpr; sparks.push({ x, y, vx: Math.cos(b) * v, vy: Math.sin(b) * v, l: 1, h: hue }); } }
+function frame(ts) { requestAnimationFrame(frame); draw(ts); }
+
+// ---------------------------------------------------------------- playing along
+function play(i, x, y) { if (!ac) { begin(); return; } if (!playing) setPlaying(true); eng.touch(Math.max(0, Math.min(11, i)), ac.currentTime); if (x != null) ripples.push({ x, y, a: 0 }); hint.style.opacity = '0'; }
+canvas.addEventListener('pointerdown', e => {
+  const b = canvas.getBoundingClientRect(), x = (e.clientX - b.left) * dpr, y = (e.clientY - b.top) * dpr;
+  play(Math.round((1 - (e.clientY - b.top) / b.height) * 11), x, y);          // higher on the screen is higher in pitch
+});
+const KEYROW = 'asdfghjkl;\'';
+addEventListener('keydown', e => {
+  if (e.metaKey || e.ctrlKey || e.altKey || e.repeat) return;
+  const k = e.key.toLowerCase(), i = KEYROW.indexOf(k);
+  if (i >= 0 && k.length === 1) { const a = ang(eng && ac ? eng.pos(ac.currentTime) : 0); play(i, cx + Math.cos(a) * R * 0.96, cy + Math.sin(a) * R * 0.96); }
+  else if (e.key === '1') pickMood('dawn'); else if (e.key === '2') pickMood('drift'); else if (e.key === '3') pickMood('pulse');
+  else if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); setPlaying(!playing); }
+  else if (e.key === 'Backspace' || k === 'c') { if (eng) eng.user.forEach(s => { s.length = 0; }); }
+});
+// presenter hub bridge
+addEventListener('keydown', e => {
+  const m = e.key === 'PageDown' || (e.shiftKey && e.key === 'ArrowRight') ? 'next' : e.key === 'PageUp' || (e.shiftKey && e.key === 'ArrowLeft') ? 'prev' : e.key === 'Escape' ? 'menu' : '';
+  if (m && parent !== window) { e.preventDefault(); e.stopPropagation(); parent.postMessage({ sit: m }, '*'); }
+}, true);
+
+// Render a stretch of the music offline and measure it: the only way to check loudness without ears.
+window.__sound = {
+  async analyze(mood, seconds) {
+    const sr = 44100, off = new OfflineAudioContext(2, sr * seconds, sr), e = makeEngine(off, mood); e.t = 0.05; e.advance(seconds);
+    const buf = await off.startRendering(), L = buf.getChannelData(0), Rr = buf.getChannelData(1), win = [];
+    let peak = 0, hot = 0, nan = 0;
+    for (let s = 0; s < seconds; s++) { let sum = 0, pk = 0, zc = 0; for (let i = s * sr; i < (s + 1) * sr; i++) { const v = L[i]; if (v !== v) nan++; sum += v * v + Rr[i] * Rr[i]; const a = Math.max(Math.abs(v), Math.abs(Rr[i])); if (a > pk) pk = a; if (a > 0.98) hot++; if (i && (L[i - 1] < 0) !== (v < 0)) zc++; } win.push([+(10 * Math.log10(sum / (2 * sr) + 1e-12)).toFixed(1), +pk.toFixed(2), zc]); if (pk > peak) peak = pk; }
+    return { mood, peak: +peak.toFixed(3), hot, nan, perSecond_rmsDb_peak_zeroCrossings: win };
+  },
+  begin, get eng() { return eng; }, draw,
+};
+syncUI();
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

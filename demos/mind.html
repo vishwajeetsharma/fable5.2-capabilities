@@ -1,0 +1,498 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Mind · machines that learn while you watch</title>
+<style>
+:root { color-scheme: dark; --bg: #080b12; --ink: #eef1f8; --dim: rgba(238,241,248,.64); --faint: rgba(238,241,248,.28); --line: rgba(238,241,248,.18);
+  --glass: rgba(12,15,24,.78); --hot: #ffd27a; --series: #3987e5; --pos: #ffb45e; --neg: #62b4ff; }
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--ink);
+  font: 14px/1.4 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; }
+#c { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: crosshair; }
+.tag { position: fixed; left: max(20px, env(safe-area-inset-left)); top: max(18px, env(safe-area-inset-top)); display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+  pointer-events: none; text-transform: uppercase; letter-spacing: .2em; font-size: 11px; color: var(--dim); }
+.tag b { color: var(--ink); font-weight: 600; }
+.panel { position: fixed; right: max(16px, env(safe-area-inset-right)); top: max(14px, env(safe-area-inset-top)); width: min(318px, calc(100vw - 32px)); display: flex; flex-direction: column; gap: 8px;
+  padding: 14px 14px 12px; border: 1px solid var(--line); border-radius: 14px; background: var(--glass); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
+.head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.head .k { text-transform: uppercase; letter-spacing: .16em; font-size: 11px; color: var(--dim); }
+.head .v { font: 600 30px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; }
+.sub { font-size: 12.5px; color: var(--dim); font-variant-numeric: tabular-nums; }
+#brain { width: 100%; height: auto; display: block; }
+.cap { font-size: 11.5px; color: var(--dim); }
+.chart { position: relative; border-top: 1px solid var(--line); padding-top: 9px; margin-top: 2px; }
+.ct { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-size: 12px; color: var(--dim); }
+.ct b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+#curve { width: 100%; height: auto; display: block; overflow: visible; margin-top: 4px; }
+.tip { position: absolute; transform: translate(-50%, -100%); padding: 4px 8px; border-radius: 7px; background: #f2f4fa; color: #0a0d14; font-size: 11.5px; white-space: nowrap; pointer-events: none; font-variant-numeric: tabular-nums; }
+.dock { position: fixed; left: 0; right: 0; bottom: max(16px, env(safe-area-inset-bottom)); display: flex; flex-direction: column; align-items: center; gap: 10px;
+  padding: 0 max(16px, env(safe-area-inset-right)) 0 max(16px, env(safe-area-inset-left)); pointer-events: none; }
+.dock > * { pointer-events: auto; }
+.hint { margin: 0; text-align: center; font-size: 12.5px; letter-spacing: .03em; pointer-events: none; transition: opacity 1.4s; color: var(--dim); }
+.row { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px; }
+.seg { display: flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; background: var(--glass); }
+.seg button { border: 0; border-radius: 0; background: transparent; padding: 8px 13px; }
+button { appearance: none; border: 1px solid var(--line); background: var(--glass); color: var(--ink); padding: 8px 14px; border-radius: 999px; font: inherit; font-size: 12.5px; letter-spacing: .04em; cursor: pointer; }
+button:hover { border-color: rgba(238,241,248,.55); }
+button:focus-visible { outline: 2px solid var(--hot); outline-offset: 2px; }
+button.on, button.primary { background: var(--ink); color: #070914; border-color: var(--ink); }
+button.primary { font-weight: 600; padding: 8px 18px; }
+#big { position: fixed; left: 0; right: 0; top: 38%; text-align: center; font: 700 clamp(48px, 12vw, 150px)/1 ui-sans-serif, system-ui, sans-serif; letter-spacing: -.02em; pointer-events: none; text-shadow: 0 6px 40px rgba(0,0,0,.6); }
+#card { position: fixed; left: 50%; top: 42%; transform: translate(-50%, -50%); width: min(440px, calc(100vw - 32px)); padding: 22px 22px 18px; border: 1px solid var(--line); border-radius: 16px;
+  background: var(--glass); -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); text-align: center; display: flex; flex-direction: column; gap: 12px; }
+#card h2 { margin: 0; font-size: 24px; line-height: 1.15; text-wrap: balance; }
+#card p { margin: 0; color: var(--dim); font-variant-numeric: tabular-nums; }
+#toast { position: fixed; left: 50%; top: max(52px, env(safe-area-inset-top)); transform: translateX(-50%); padding: 7px 14px; border-radius: 999px; background: #f2f4fa; color: #0a0d14; font-size: 13px; font-weight: 500;
+  opacity: 0; transition: opacity .4s; pointer-events: none; white-space: nowrap; max-width: calc(100vw - 32px); overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 1099px) { .panel { width: min(230px, calc(100vw - 32px)); padding: 10px 12px; } #brain, .cap { display: none; } .tag span:last-child { display: none; } }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="tag"><b>V</b><span>Mind</span><span>nobody programmed these cars to drive</span></div>
+<aside class="panel" id="panel">
+  <div class="head"><span class="k">Generation</span><span class="v" id="gen">1</span></div>
+  <div class="sub" id="alive">200 of 200 still driving</div>
+  <canvas id="brain" width="600" height="340" role="img" aria-label="Diagram of the leading car's neural network, updating live"></canvas>
+  <div class="cap">The leader's brain, live. Six senses in, eight neurons, two controls out.</div>
+  <div class="chart" id="chart">
+    <div class="ct"><span>Best distance each generation</span><b id="lastv">0.00 laps</b></div>
+    <svg id="curve" viewBox="0 0 300 78" role="img" aria-label="Line chart of the best distance reached in each generation"></svg>
+    <div class="tip" id="tip" hidden></div>
+  </div>
+  <div class="sub" id="lap">Fastest lap: none yet</div>
+</aside>
+<div id="toast"></div>
+<div id="big" hidden></div>
+<div id="card" hidden>
+  <h2 id="cardTitle"></h2><p id="cardBody"></p>
+  <div class="row"><button type="button" class="primary" id="again">race again</button><button type="button" id="back">back to training</button></div>
+</div>
+<div class="dock">
+  <p class="hint" id="hint">200 random brains. The ones that drive furthest have children. Drag on the screen to draw a track of your own.</p>
+  <div class="row">
+    <div class="seg" role="group" aria-label="Simulation speed">
+      <button type="button" data-speed="1">1&times;</button><button type="button" data-speed="4" class="on">4&times;</button><button type="button" data-speed="16">16&times;</button>
+    </div>
+    <button type="button" class="primary" id="race">race the AI</button>
+    <button type="button" id="reset">new brains</button>
+  </div>
+</div>
+<script>
+(() => {
+'use strict';
+const $ = id => document.getElementById(id);
+const canvas = $('c'), ctx = canvas.getContext('2d'), hint = $('hint'), panel = $('panel');
+const WW = 1400, WH = 900, TW = 62, DS = 6, MS = 0.5, MW = WW * MS, MH = WH * MS;
+const POP = 200, NI = 6, NH = 8, NO = 2, GENES = (NI + 1) * NH + (NH + 1) * NO;
+const DT = 1 / 60, VMAX = 520, VMIN = 70, ACC = 300, BRAKE = 560, DRAG = 0.55, GRIP = 430, STEER = 3.4, RANGE = 300;
+const RAYS = [-1.25, -0.6, 0, 0.6, 1.25], LAPS_GOAL = 1, RACE_LAPS = 2, PACE = 140;
+const gauss = () => Math.sqrt(-2 * Math.log(1 - Math.random())) * Math.cos(6.2831853 * Math.random());
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+
+// ---------------------------------------------------------------- track: a closed centre line, a width, and a bitmap for the sensors
+let trk = null;
+function catmull(p, per) {
+  const out = [], n = p.length;
+  for (let i = 0; i < n; i++) {
+    const a = p[(i - 1 + n) % n], b = p[i], c = p[(i + 1) % n], d = p[(i + 2) % n];
+    for (let j = 0; j < per; j++) {
+      const t = j / per, t2 = t * t, t3 = t2 * t;
+      out.push([0.5 * (2 * b[0] + (c[0] - a[0]) * t + (2 * a[0] - 5 * b[0] + 4 * c[0] - d[0]) * t2 + (3 * b[0] - a[0] - 3 * c[0] + d[0]) * t3),
+                0.5 * (2 * b[1] + (c[1] - a[1]) * t + (2 * a[1] - 5 * b[1] + 4 * c[1] - d[1]) * t2 + (3 * b[1] - a[1] - 3 * c[1] + d[1]) * t3)]);
+    }
+  }
+  return out;
+}
+function resample(p, ds, closed) {
+  const n = p.length, m = closed ? n : n - 1, cum = [0];
+  for (let i = 0; i < m; i++) { const a = p[i], b = p[(i + 1) % n]; cum.push(cum[i] + Math.hypot(b[0] - a[0], b[1] - a[1])); }
+  const L = cum[m], cnt = Math.max(3, Math.round(L / ds)), out = []; let seg = 0;
+  for (let k = 0; k < (closed ? cnt : cnt + 1); k++) {
+    const s = Math.min(L, k * L / cnt);
+    while (seg < m - 1 && cum[seg + 1] < s) seg++;
+    const a = p[seg], b = p[(seg + 1) % n], f = (s - cum[seg]) / Math.max(1e-6, cum[seg + 1] - cum[seg]);
+    out.push([a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f]);
+  }
+  return out;
+}
+function buildTrack(ctrl) {
+  const pts = resample(catmull(ctrl, 8), DS, true), n = pts.length;
+  const x = new Float32Array(n), y = new Float32Array(n), hx = new Float32Array(n), hy = new Float32Array(n), mask = new Uint8Array(MW * MH);
+  for (let i = 0; i < n; i++) { x[i] = pts[i][0]; y[i] = pts[i][1]; }
+  for (let i = 0; i < n; i++) { const j = (i + 1) % n, k = (i - 1 + n) % n, dx = x[j] - x[k], dy = y[j] - y[k], l = Math.hypot(dx, dy) || 1; hx[i] = dx / l; hy[i] = dy / l; }
+  const R = TW / 2 * MS, R2 = R * R;
+  for (let i = 0; i < n; i++) {
+    const cx = x[i] * MS, cy = y[i] * MS;
+    for (let py = Math.max(0, Math.floor(cy - R)); py <= Math.min(MH - 1, Math.ceil(cy + R)); py++) {
+      const dy = py + 0.5 - cy, w = Math.sqrt(Math.max(0, R2 - dy * dy));
+      for (let px = Math.max(0, Math.floor(cx - w)); px <= Math.min(MW - 1, Math.ceil(cx + w)); px++) mask[py * MW + px] = 1;
+    }
+  }
+  trk = { n, x, y, hx, hy, mask };
+}
+const DEFAULT = [[300, 780], [560, 790], [820, 770], [1060, 790], [1240, 720], [1290, 560], [1200, 430], [1040, 420], [960, 520], [840, 560], [760, 450], [860, 330], [1060, 290], [1230, 220], [1220, 110],
+  [1040, 80], [800, 110], [600, 90], [400, 120], [250, 90], [130, 170], [140, 330], [270, 400], [430, 380], [540, 460], [480, 580], [310, 580], [160, 620], [140, 730]];
+const on = (x, y) => { const mx = (x * MS) | 0, my = (y * MS) | 0; return mx >= 0 && my >= 0 && mx < MW && my < MH && trk.mask[my * MW + mx] === 1; };
+function cast(x, y, a) {
+  const dx = Math.cos(a), dy = Math.sin(a);
+  for (let d = 8; d <= RANGE; d += 8) if (!on(x + dx * d, y + dy * d)) {
+    let lo = d - 8, hi = d;
+    for (let k = 0; k < 3; k++) { const m = (lo + hi) / 2; if (on(x + dx * m, y + dy * m)) lo = m; else hi = m; }
+    return lo;
+  }
+  return RANGE;
+}
+let locDi = 0, locD2 = 0;
+function locate(x, y, idx) {                    // nearest centre-line point, searched only near where the car last was
+  const n = trk.n; let best = 1e18, bd = 0;
+  for (let k = -3; k <= 10; k++) { const j = ((idx + k) % n + n) % n, dx = trk.x[j] - x, dy = trk.y[j] - y, d = dx * dx + dy * dy; if (d < best) { best = d; bd = k; } }
+  locDi = bd; locD2 = best;
+}
+
+// ---------------------------------------------------------------- brains: 74 numbers each
+const inp = new Float32Array(NI), hid = new Float32Array(NH), out = new Float32Array(NO), rayD = new Float32Array(5);
+function sense(x, y, a, v) { for (let r = 0; r < 5; r++) { rayD[r] = cast(x, y, a + RAYS[r]); inp[r] = rayD[r] / RANGE; } inp[5] = v / VMAX; }
+function think(G, g) {
+  for (let h = 0; h < NH; h++) { const o = g + h * (NI + 1); let s = G[o + NI]; for (let i = 0; i < NI; i++) s += G[o + i] * inp[i]; hid[h] = Math.tanh(s); }
+  const o2 = g + NH * (NI + 1);
+  for (let k = 0; k < NO; k++) { const o = o2 + k * (NH + 1); let s = G[o + NH]; for (let h = 0; h < NH; h++) s += G[o + h] * hid[h]; out[k] = Math.tanh(s); }
+}
+function drive(c, i, steer, gas) {              // one physics step for car i of the set c
+  let v = c.V[i];
+  v += ((gas > 0 ? gas * ACC : gas * BRAKE) - DRAG * v) * DT; v = clamp(v, VMIN, VMAX);
+  c.A[i] += clamp(steer, -1, 1) * Math.min(STEER, GRIP / v) * DT;     // the faster it goes, the wider it must turn
+  c.X[i] += Math.cos(c.A[i]) * v * DT; c.Y[i] += Math.sin(c.A[i]) * v * DT; c.V[i] = v;
+}
+const mkSet = n => ({ n, X: new Float32Array(n), Y: new Float32Array(n), A: new Float32Array(n), V: new Float32Array(n), PROG: new Float32Array(n), BEST: new Float32Array(n),
+  LAST: new Float32Array(n), T1: new Float32Array(n), IDX: new Int32Array(n), ALIVE: new Uint8Array(n), CX: new Float32Array(n), CY: new Float32Array(n) });
+function place(c, i, back, side) {
+  const n = trk.n, j = ((-back % n) + n) % n;
+  c.X[i] = trk.x[j] - trk.hy[j] * side; c.Y[i] = trk.y[j] + trk.hx[j] * side; c.A[i] = Math.atan2(trk.hy[j], trk.hx[j]);
+  c.V[i] = 120; c.PROG[i] = -back; c.BEST[i] = -back; c.LAST[i] = 0; c.T1[i] = 0; c.IDX[i] = j; c.ALIVE[i] = 1;
+}
+
+// ---------------------------------------------------------------- evolution
+const pop = mkSet(POP);
+let G = new Float32Array(POP * GENES), HUE = new Float32Array(POP), champs = null;
+let gen = 1, simT = 0, aliveN = POP, leader = 0, history = [], bestLap = 0, stagnant = 0, bestEver = 0, genTimes = [];
+function randomBrain(k) { for (let g = 0; g < GENES; g++) G[k * GENES + g] = gauss() * 0.7; HUE[k] = Math.random() * 360; }
+function startGeneration() { simT = 0; aliveN = POP; for (let i = 0; i < POP; i++) place(pop, i, 0, (Math.random() - 0.5) * 18); }
+function newBrains() { for (let k = 0; k < POP; k++) randomBrain(k); gen = 1; history = []; bestLap = 0; stagnant = 0; bestEver = 0; champs = null; startGeneration(); drawCurve(); }
+function evolve() {
+  const order = Array.from({ length: POP }, (_, i) => i).sort((a, b) => pop.BEST[b] - pop.BEST[a]);
+  const top = pop.BEST[order[0]] / trk.n;
+  history.push(Math.max(0, Math.min(LAPS_GOAL, top))); if (history.length > 400) history.shift(); genTimes.push(+simT.toFixed(1));
+  if (top > bestEver + 0.02) { bestEver = top; stagnant = 0; } else stagnant++;
+  champs = order.slice(0, 3).map(i => G.slice(i * GENES, (i + 1) * GENES));
+  const nG = new Float32Array(POP * GENES), nH = new Float32Array(POP), elite = 5, pool = Math.floor(POP * 0.25), sigma = stagnant >= 3 ? 0.55 : 0.33;
+  const pick = () => { let b = pool; for (let t = 0; t < 3; t++) b = Math.min(b, (Math.random() * pool) | 0); return order[b]; };
+  for (let k = 0; k < POP; k++) {
+    const o = k * GENES;
+    if (k < elite) { nG.set(G.subarray(order[k] * GENES, (order[k] + 1) * GENES), o); nH[k] = HUE[order[k]]; }           // the best survive untouched
+    else if (k >= POP - 8) { for (let g = 0; g < GENES; g++) nG[o + g] = gauss() * 0.7; nH[k] = Math.random() * 360; }   // a few newcomers keep the gene pool fresh
+    else {
+      const a = pick(), b = Math.random() < 0.6 ? pick() : a;
+      for (let g = 0; g < GENES; g++) { let w = Math.random() < 0.5 ? G[a * GENES + g] : G[b * GENES + g]; if (Math.random() < 0.12) w += gauss() * sigma; nG[o + g] = w; }
+      nH[k] = (HUE[a] + gauss() * 7 + 360) % 360;                                                                          // children look like their parents
+    }
+  }
+  G = nG; HUE = nH; gen++; startGeneration(); drawCurve();
+}
+function stepTrain() {
+  const n = trk.n, half2 = TW * TW / 4; simT += DT; let alive = 0, lead = -1, leadP = -1e9, goal = false;
+  for (let i = 0; i < POP; i++) {
+    if (!pop.ALIVE[i]) continue;
+    sense(pop.X[i], pop.Y[i], pop.A[i], pop.V[i]); think(G, i * GENES); drive(pop, i, out[0], out[1]);
+    locate(pop.X[i], pop.Y[i], pop.IDX[i]); pop.IDX[i] = ((pop.IDX[i] + locDi) % n + n) % n; pop.PROG[i] += locDi;
+    if (pop.PROG[i] > pop.BEST[i]) {
+      if (pop.BEST[i] < n && pop.PROG[i] >= n && (!bestLap || simT < bestLap)) bestLap = simT;
+      pop.BEST[i] = pop.PROG[i]; pop.LAST[i] = simT;
+    }
+    // out: left the tarmac, stopped making headway, turned round, or simply too slow
+    if (locD2 > half2 || simT - pop.LAST[i] > 1.6 || pop.PROG[i] < pop.BEST[i] - 14 || pop.BEST[i] * DS < PACE * (simT - 2.5)) { pop.ALIVE[i] = 0; pop.CX[i] = pop.X[i]; pop.CY[i] = pop.Y[i]; continue; }
+    alive++; if (pop.BEST[i] > leadP) { leadP = pop.BEST[i]; lead = i; }
+    if (pop.BEST[i] >= LAPS_GOAL * n) goal = true;
+  }
+  aliveN = alive;
+  if (lead < 0) { for (let i = 0; i < POP; i++) if (pop.BEST[i] > leadP) { leadP = pop.BEST[i]; lead = i; } }
+  leader = lead;
+  if (alive === 0 || goal || simT > 60) evolve();
+}
+
+// ---------------------------------------------------------------- the race: you against the three best brains
+let mode = 'train', race = null, steerIn = 0;
+const keys = {};
+const RACE_COL = ['#ffffff', '#ff7a66', '#6bd4ff', '#b79bff'];
+function startRace() {
+  const src = champs || (() => { const order = Array.from({ length: POP }, (_, i) => i).sort((a, b) => pop.BEST[b] - pop.BEST[a]); return order.slice(0, 3).map(i => G.slice(i * GENES, (i + 1) * GENES)); })();
+  const set = mkSet(4), genes = new Float32Array(4 * GENES);
+  for (let k = 0; k < 3; k++) genes.set(src[k], (k + 1) * GENES);
+  const grid = [[0, -14], [5, 14], [10, -14], [15, 14]];                              // you start on pole
+  for (let i = 0; i < 4; i++) { place(set, i, grid[i][0], grid[i][1]); set.V[i] = VMIN; }
+  race = { set, genes, t: -3.2, fin: [0, 0, 0, 0], down: [0, 0, 0, 0], trail: [[], [], [], []], over: 0, off: 0 };
+  mode = 'race'; steerIn = 0; $('card').hidden = true; hint.style.opacity = '0'; syncUI();
+}
+function stepRace() {
+  const r = race, c = r.set, n = trk.n, half2 = TW * TW / 4;
+  r.t += DT; if (r.t < 0) return;
+  for (let i = 0; i < 4; i++) {
+    if (r.fin[i]) { c.V[i] *= 0.97; c.X[i] += Math.cos(c.A[i]) * c.V[i] * DT * 0.5; c.Y[i] += Math.sin(c.A[i]) * c.V[i] * DT * 0.5; continue; }
+    if (r.down[i] > 0) { r.down[i] -= DT; if (r.down[i] <= 0) { const j = c.IDX[i]; c.X[i] = trk.x[j]; c.Y[i] = trk.y[j]; c.A[i] = Math.atan2(trk.hy[j], trk.hx[j]); c.V[i] = VMIN; } continue; }
+    if (i === 0) {
+      const tgt = (keys.right ? 1 : 0) - (keys.left ? 1 : 0); steerIn += (tgt - steerIn) * Math.min(1, DT * 11);
+      drive(c, 0, steerIn, keys.down ? -1 : keys.up || keys.auto ? 1 : 0);
+    } else { sense(c.X[i], c.Y[i], c.A[i], c.V[i]); think(r.genes, i * GENES); drive(c, i, out[0], out[1]); }
+    locate(c.X[i], c.Y[i], c.IDX[i]); c.IDX[i] = ((c.IDX[i] + locDi) % n + n) % n; c.PROG[i] += locDi;
+    if (locD2 > half2) {                                                                              // off the tarmac: grass slows you, then you are put back; a brain that crashes is put back after a pause
+      if (i === 0) { c.V[0] = Math.max(VMIN, c.V[0] * 0.93); r.off += DT; if (r.off > 1.1) { r.off = 0; r.down[0] = 0.5; steerIn = 0; } } else r.down[i] = 0.8;
+    } else if (i === 0) r.off = 0;
+    if (c.PROG[i] >= RACE_LAPS * n) r.fin[i] = r.t;
+    const tr = r.trail[i]; tr.push(c.X[i], c.Y[i]); if (tr.length > 90) tr.splice(0, 2);
+  }
+  const aiBest = Math.min(...[1, 2, 3].map(i => r.fin[i] || 1e9));
+  if (!r.over && (r.fin[0] || (aiBest < 1e9 && r.t > aiBest + 7))) { r.over = 1; finishRace(aiBest); }
+}
+function finishRace(aiBest) {
+  const r = race, you = r.fin[0], f = t => t.toFixed(1) + ' s';
+  let title, body;
+  if (you && you <= aiBest) { title = 'You beat the machine.'; body = aiBest < 1e9 ? `You ${f(you)}. Best brain ${f(aiBest)}. Give it a few more generations.` : `You finished in ${f(you)}. None of the brains made it round.`; }
+  else if (you) { title = 'The machine wins.'; body = `Best brain ${f(aiBest)}. You ${f(you)}, ${f(you - aiBest)} behind something that could not drive ${gen} generations ago.`; }
+  else { title = 'The machine wins.'; body = `Best brain ${f(aiBest)}. You were still ${Math.max(1, Math.round((RACE_LAPS * trk.n - r.set.PROG[0]) * DS / 10))} m from the flag.`; }
+  $('cardTitle').textContent = title; $('cardBody').textContent = body; $('card').hidden = false;
+}
+function endRace() { mode = 'train'; race = null; $('card').hidden = true; $('big').hidden = true; startGeneration(); syncUI(); }
+
+// ---------------------------------------------------------------- drawing
+let S = 1, OX = 0, OY = 0, dpr = 1;
+const layer = document.createElement('canvas'), lctx = layer.getContext('2d');
+function fit() {
+  dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const cw = canvas.clientWidth || innerWidth, ch = canvas.clientHeight || innerHeight, w = Math.round(cw * dpr), h = Math.round(ch * dpr);
+  if (canvas.width === w && canvas.height === h) return false;
+  canvas.width = w; canvas.height = h;
+  const side = cw >= 1100 ? 346 : 0, top = cw >= 1100 ? 46 : 176, bottom = 104;                     // keep clear of the panel and the dock
+  const aw = cw - side - 24, ah = ch - top - bottom, sc = Math.max(0.05, Math.min(aw / WW, ah / WH));
+  S = sc * dpr; OX = (12 + (aw - WW * sc) / 2) * dpr; OY = (top + (ah - WH * sc) / 2) * dpr;
+  return true;
+}
+function trackPath(c) { c.beginPath(); c.moveTo(trk.x[0], trk.y[0]); for (let i = 1; i < trk.n; i++) c.lineTo(trk.x[i], trk.y[i]); c.closePath(); }
+function paintTrack() {
+  layer.width = canvas.width; layer.height = canvas.height; const c = lctx;
+  c.setTransform(1, 0, 0, 1, 0, 0); c.fillStyle = '#080b12'; c.fillRect(0, 0, layer.width, layer.height);
+  c.setTransform(S, 0, 0, S, OX, OY);
+  c.fillStyle = 'rgba(238,241,248,0.05)'; for (let y = 50; y < WH; y += 50) for (let x = 50; x < WW; x += 50) c.fillRect(x - 1, y - 1, 2, 2);
+  c.lineJoin = c.lineCap = 'round'; trackPath(c);
+  c.strokeStyle = 'rgba(98,180,255,0.07)'; c.lineWidth = TW + 34; c.stroke();
+  c.strokeStyle = '#eef1f8'; c.lineWidth = TW + 7; c.stroke();
+  c.lineCap = 'butt'; c.setLineDash([15, 15]); c.strokeStyle = '#e2534d'; c.stroke(); c.setLineDash([]); c.lineCap = 'round';       // red and white kerbs
+  c.strokeStyle = '#161a25'; c.lineWidth = TW; c.stroke();
+  c.lineCap = 'butt'; c.setLineDash([12, 26]); c.strokeStyle = 'rgba(238,241,248,0.13)'; c.lineWidth = 2; c.stroke(); c.setLineDash([]);
+  const a = Math.atan2(trk.hy[0], trk.hx[0]); c.save(); c.translate(trk.x[0], trk.y[0]); c.rotate(a);                                  // chequered start line
+  for (let r = 0; r < 2; r++) for (let k = 0; k < 8; k++) { c.fillStyle = (r + k) % 2 ? '#eef1f8' : '#11141c'; c.fillRect(4 + r * 5, -TW / 2 + k * TW / 8, 5, TW / 8); }
+  c.restore();
+}
+function car(x, y, a, len, wid, fill, alpha) {
+  const cs = Math.cos(a) * S, sn = Math.sin(a) * S;
+  ctx.setTransform(cs, sn, -sn, cs, OX + x * S, OY + y * S); ctx.globalAlpha = alpha; ctx.fillStyle = fill;
+  ctx.beginPath(); ctx.roundRect(-len / 2, -wid / 2, len, wid, wid * 0.42); ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.9)'; ctx.fillRect(len / 2 - 4.5, -wid / 2 + 1.2, 2.6, wid - 2.4);
+}
+const hasRR = !!ctx.roundRect; if (!hasRR) CanvasRenderingContext2D.prototype.roundRect = function (x, y, w, h) { this.rect(x, y, w, h); };
+let stroke = null;                                                  // a track being drawn by hand
+function render() {
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over'; ctx.drawImage(layer, 0, 0);
+  if (mode === 'train') {
+    ctx.setTransform(S, 0, 0, S, OX, OY); ctx.lineWidth = 1.6; ctx.lineCap = 'round';
+    for (let i = 0; i < POP; i++) if (!pop.ALIVE[i]) {                                           // where each one came to grief
+      ctx.strokeStyle = `hsla(${HUE[i]},70%,62%,0.34)`; const x = pop.CX[i], y = pop.CY[i];
+      ctx.beginPath(); ctx.moveTo(x - 4, y - 4); ctx.lineTo(x + 4, y + 4); ctx.moveTo(x + 4, y - 4); ctx.lineTo(x - 4, y + 4); ctx.stroke();
+    }
+    ctx.globalCompositeOperation = 'lighter';
+    for (let i = 0; i < POP; i++) if (pop.ALIVE[i] && i !== leader) car(pop.X[i], pop.Y[i], pop.A[i], 17, 8.5, `hsl(${HUE[i]},82%,58%)`, 0.62);
+    ctx.globalCompositeOperation = 'source-over';
+    const L = leader;
+    if (L >= 0 && pop.ALIVE[L]) {
+      sense(pop.X[L], pop.Y[L], pop.A[L], pop.V[L]); think(G, L * GENES);
+      ctx.setTransform(S, 0, 0, S, OX, OY); ctx.globalAlpha = 1; ctx.lineWidth = 1.2;
+      for (let r = 0; r < 5; r++) {                                                              // what the leader sees
+        const a = pop.A[L] + RAYS[r], ex = pop.X[L] + Math.cos(a) * rayD[r], ey = pop.Y[L] + Math.sin(a) * rayD[r];
+        ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.beginPath(); ctx.moveTo(pop.X[L], pop.Y[L]); ctx.lineTo(ex, ey); ctx.stroke();
+        ctx.fillStyle = rayD[r] < RANGE - 1 ? '#ffd27a' : 'rgba(255,255,255,0.5)'; ctx.beginPath(); ctx.arc(ex, ey, 3, 0, 6.2832); ctx.fill();
+      }
+      ctx.strokeStyle = 'rgba(255,255,255,0.55)'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(pop.X[L], pop.Y[L], 17, 0, 6.2832); ctx.stroke();
+      car(pop.X[L], pop.Y[L], pop.A[L], 19, 9.5, '#ffffff', 1);
+    }
+  } else if (race) {
+    const c = race.set;
+    for (let i = 3; i >= 0; i--) {
+      const tr = race.trail[i]; ctx.setTransform(S, 0, 0, S, OX, OY); ctx.globalAlpha = 0.5; ctx.strokeStyle = RACE_COL[i]; ctx.lineWidth = i ? 2 : 3; ctx.lineCap = 'round';
+      ctx.beginPath(); for (let k = 0; k < tr.length; k += 2) k ? ctx.lineTo(tr[k], tr[k + 1]) : ctx.moveTo(tr[k], tr[k + 1]); ctx.stroke();
+      if (race.down[i] > 0) continue;
+      car(c.X[i], c.Y[i], c.A[i], i ? 19 : 21, i ? 9.5 : 10.5, RACE_COL[i], 1);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.globalAlpha = 1; ctx.fillStyle = RACE_COL[i]; ctx.font = '600 11px ui-sans-serif, system-ui, sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText(i ? 'AI' : 'YOU', (OX + c.X[i] * S) / dpr, (OY + c.Y[i] * S) / dpr - 13);
+    }
+  }
+  if (stroke && stroke.length > 1) {
+    ctx.setTransform(S, 0, 0, S, OX, OY); ctx.globalAlpha = 0.5; ctx.strokeStyle = '#ffd27a'; ctx.lineWidth = TW; ctx.lineJoin = ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(stroke[0][0], stroke[0][1]); for (let i = 1; i < stroke.length; i++) ctx.lineTo(stroke[i][0], stroke[i][1]); ctx.stroke();
+  }
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1;
+}
+
+// the leader's network, drawn as it fires
+const bcv = $('brain'), bctx = bcv.getContext('2d');
+const IN_LABEL = ['left', 'front left', 'ahead', 'front right', 'right', 'speed'], OUT_LABEL = ['steer', 'throttle'];
+function drawBrain() {
+  if (!bcv.offsetParent) return;
+  const c = bctx, Wd = 300, Hd = 170; c.setTransform(2, 0, 0, 2, 0, 0); c.clearRect(0, 0, Wd, Hd);
+  const L = mode === 'train' ? leader : -1, src = mode === 'train' ? G : race ? race.genes : G, g0 = mode === 'train' ? Math.max(0, L) * GENES : GENES;
+  if (mode !== 'train' && race) { const s = race.set; sense(s.X[1], s.Y[1], s.A[1], s.V[1]); think(src, g0); }
+  const xi = 84, xh = 176, xo = 232, yi = i => 16 + i * 27.6, yh = h => 12 + h * 20.8, yo = k => 62 + k * 46;
+  for (let h = 0; h < NH; h++) for (let i = 0; i < NI; i++) {
+    const w = src[g0 + h * (NI + 1) + i], f = w * inp[i], al = clamp(Math.abs(f) * 0.55, 0.05, 0.9);
+    c.strokeStyle = f > 0 ? `rgba(255,180,94,${al})` : `rgba(98,180,255,${al})`; c.lineWidth = 0.6 + Math.min(2.2, Math.abs(w) * 0.9);
+    c.beginPath(); c.moveTo(xi, yi(i)); c.lineTo(xh, yh(h)); c.stroke();
+  }
+  const o2 = g0 + NH * (NI + 1);
+  for (let k = 0; k < NO; k++) for (let h = 0; h < NH; h++) {
+    const w = src[o2 + k * (NH + 1) + h], f = w * hid[h], al = clamp(Math.abs(f) * 0.55, 0.05, 0.9);
+    c.strokeStyle = f > 0 ? `rgba(255,180,94,${al})` : `rgba(98,180,255,${al})`; c.lineWidth = 0.6 + Math.min(2.2, Math.abs(w) * 0.9);
+    c.beginPath(); c.moveTo(xh, yh(h)); c.lineTo(xo, yo(k)); c.stroke();
+  }
+  const node = (x, y, v, r) => {
+    const m = Math.min(1, Math.abs(v)); c.fillStyle = '#0c0f18'; c.beginPath(); c.arc(x, y, r, 0, 6.2832); c.fill();
+    c.fillStyle = v >= 0 ? `rgba(255,180,94,${0.15 + 0.85 * m})` : `rgba(98,180,255,${0.15 + 0.85 * m})`; c.beginPath(); c.arc(x, y, r, 0, 6.2832); c.fill();
+    c.strokeStyle = 'rgba(238,241,248,0.5)'; c.lineWidth = 1; c.stroke();
+  };
+  c.font = '10.5px ui-sans-serif, system-ui, sans-serif'; c.textBaseline = 'middle';
+  for (let i = 0; i < NI; i++) { node(xi, yi(i), inp[i], 6.5); c.fillStyle = 'rgba(238,241,248,0.7)'; c.textAlign = 'right'; c.fillText(IN_LABEL[i], xi - 12, yi(i)); }
+  for (let h = 0; h < NH; h++) node(xh, yh(h), hid[h], 5.5);
+  for (let k = 0; k < NO; k++) {
+    node(xo, yo(k), out[k], 8); c.fillStyle = 'rgba(238,241,248,0.7)'; c.textAlign = 'left'; c.fillText(OUT_LABEL[k], xo + 13, yo(k) - 7);
+    c.fillStyle = '#eef1f8'; c.fillText(k === 0 ? (out[0] > 0.12 ? 'right' : out[0] < -0.12 ? 'left' : 'straight') : (out[1] > 0.1 ? 'gas' : out[1] < -0.1 ? 'brake' : 'coast'), xo + 13, yo(k) + 7);
+  }
+}
+
+// learning curve: one series, so no legend; the header names it and carries the latest value
+const svg = $('curve'), tip = $('tip'), NSX = 'http://www.w3.org/2000/svg';
+const PX0 = 4, PX1 = 296, PY0 = 8, PY1 = 62;
+const cx = i => history.length < 2 ? PX0 : PX0 + (PX1 - PX0) * i / (history.length - 1), cy = v => PY1 - (PY1 - PY0) * v / LAPS_GOAL;
+function el(name, attrs) { const e = document.createElementNS(NSX, name); for (const k in attrs) e.setAttribute(k, attrs[k]); return e; }
+function drawCurve(hover) {
+  while (svg.firstChild) svg.removeChild(svg.firstChild);
+  svg.appendChild(el('line', { x1: PX0, x2: PX1, y1: PY1, y2: PY1, stroke: 'rgba(238,241,248,0.28)', 'stroke-width': 1 }));
+  svg.appendChild(el('line', { x1: PX0, x2: PX1, y1: PY0, y2: PY0, stroke: 'rgba(238,241,248,0.2)', 'stroke-width': 1, 'stroke-dasharray': '2 4' }));
+  const t = el('text', { x: PX0, y: PY0 - 2.5, fill: 'rgba(238,241,248,0.64)', 'font-size': 9 }); t.textContent = 'a full lap'; svg.appendChild(t);
+  const a = el('text', { x: PX0, y: 75, fill: 'rgba(238,241,248,0.64)', 'font-size': 9 }); a.textContent = history.length ? 'gen 1' : 'first generation still running'; svg.appendChild(a);
+  if (history.length > 1) { const b = el('text', { x: PX1, y: 75, 'text-anchor': 'end', fill: 'rgba(238,241,248,0.64)', 'font-size': 9 }); b.textContent = 'gen ' + history.length; svg.appendChild(b); }
+  if (history.length) {
+    if (history.length > 1) svg.appendChild(el('polyline', { points: history.map((v, i) => cx(i).toFixed(1) + ',' + cy(v).toFixed(1)).join(' '), fill: 'none', stroke: '#3987e5', 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
+    const i = hover != null ? hover : history.length - 1;
+    if (hover != null) svg.appendChild(el('line', { x1: cx(i), x2: cx(i), y1: PY0, y2: PY1, stroke: 'rgba(238,241,248,0.45)', 'stroke-width': 1 }));
+    svg.appendChild(el('circle', { cx: cx(i), cy: cy(history[i]), r: 4.5, fill: '#3987e5', stroke: '#0c0f18', 'stroke-width': 2 }));
+  }
+  $('lastv').textContent = (history.length ? history[history.length - 1] : 0).toFixed(2) + ' laps';
+}
+function curveHover(e) {
+  if (!history.length) return;
+  const b = svg.getBoundingClientRect(), fx = (e.clientX - b.left) / b.width * 300, i = clamp(Math.round((fx - PX0) / (PX1 - PX0) * (history.length - 1)), 0, history.length - 1);
+  drawCurve(i); const host = $('chart').getBoundingClientRect();
+  tip.hidden = false; tip.textContent = `Generation ${i + 1}: ${history[i].toFixed(2)} laps`;
+  tip.style.left = clamp(b.left - host.left + cx(i) / 300 * b.width, 70, host.width - 70) + 'px'; tip.style.top = (b.top - host.top + cy(history[i]) / 78 * b.height - 8) + 'px';
+}
+svg.addEventListener('pointermove', curveHover); svg.addEventListener('pointerdown', curveHover);
+svg.addEventListener('pointerleave', () => { tip.hidden = true; drawCurve(); });
+
+// ---------------------------------------------------------------- interface
+let speed = 4, toastT = 0;
+function toast(msg) { const t = $('toast'); t.textContent = msg; t.style.opacity = '1'; clearTimeout(toastT); toastT = setTimeout(() => { t.style.opacity = '0'; }, 2600); }
+function syncUI() {
+  document.querySelectorAll('[data-speed]').forEach(b => b.classList.toggle('on', Number(b.dataset.speed) === speed));
+  $('race').textContent = mode === 'train' ? 'race the AI' : 'back to training';
+}
+document.querySelectorAll('[data-speed]').forEach(b => b.addEventListener('click', () => { speed = Number(b.dataset.speed); syncUI(); }));
+$('race').addEventListener('click', () => mode === 'train' ? startRace() : endRace());
+$('again').addEventListener('click', startRace); $('back').addEventListener('click', endRace);
+$('reset').addEventListener('click', () => { if (mode !== 'train') endRace(); newBrains(); toast('200 new random brains'); });
+
+const world = e => { const b = canvas.getBoundingClientRect(); return [((e.clientX - b.left) * dpr - OX) / S, ((e.clientY - b.top) * dpr - OY) / S]; };
+canvas.addEventListener('pointerdown', e => {
+  if (mode !== 'train') { if (e.pointerType !== 'mouse') touchSteer(e, true); return; }
+  stroke = [world(e)]; try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
+});
+canvas.addEventListener('pointermove', e => {
+  if (mode !== 'train') { if (e.pointerType !== 'mouse' && e.buttons) touchSteer(e, true); return; }
+  if (!stroke) return; const p = world(e), q = stroke[stroke.length - 1]; if (Math.hypot(p[0] - q[0], p[1] - q[1]) > 7) stroke.push(p);
+});
+function finishStroke() {
+  const s = stroke; stroke = null; if (!s || s.length < 2) return;
+  let len = 0; for (let i = 1; i < s.length; i++) len += Math.hypot(s[i][0] - s[i - 1][0], s[i][1] - s[i - 1][1]);
+  if (len < 60) return;
+  if (len < 900) { toast('Draw a bigger loop, right round the screen'); return; }
+  let p = resample(s.map(q => [clamp(q[0], 45, WW - 45), clamp(q[1], 45, WH - 45)]), 40, false);
+  for (let pass = 0; pass < 2; pass++) p = p.map((q, i) => { const a = p[(i - 1 + p.length) % p.length], b = p[(i + 1) % p.length]; return [(a[0] + 2 * q[0] + b[0]) / 4, (a[1] + 2 * q[1] + b[1]) / 4]; });
+  if (p.length < 6) { toast('Draw a bigger loop, right round the screen'); return; }
+  buildTrack(p); paintTrack(); startGeneration(); hint.style.opacity = '0';
+  toast(gen > 2 ? 'New track. Same brains: they have never seen it.' : 'New track');
+}
+canvas.addEventListener('pointerup', e => { if (mode !== 'train') { touchSteer(e, false); return; } finishStroke(); });
+canvas.addEventListener('pointercancel', () => { stroke = null; keys.left = keys.right = keys.auto = false; });
+function touchSteer(e, down) { const left = e.clientX < innerWidth / 2; keys.auto = down; keys.left = down && left; keys.right = down && !left; }
+
+const KEYMAP = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down', a: 'left', d: 'right', w: 'up', s: 'down', A: 'left', D: 'right', W: 'up', S: 'down' };
+addEventListener('keydown', e => {
+  if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+  if (KEYMAP[e.key]) { keys[KEYMAP[e.key]] = true; if (mode !== 'train') e.preventDefault(); return; }
+  if (e.key === '1') speed = 1; else if (e.key === '2') speed = 4; else if (e.key === '3') speed = 16;
+  else if (e.key === 'r' || e.key === 'R' || e.key === 'Enter') { e.preventDefault(); mode === 'train' ? startRace() : race && race.over ? startRace() : endRace(); }
+  else if (e.key === 'n' || e.key === 'N') { if (mode !== 'train') endRace(); newBrains(); toast('200 new random brains'); }
+  syncUI();
+});
+addEventListener('keyup', e => { if (KEYMAP[e.key]) keys[KEYMAP[e.key]] = false; });
+addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
+// presenter hub bridge
+addEventListener('keydown', e => {
+  const m = e.key === 'PageDown' || (e.shiftKey && e.key === 'ArrowRight') ? 'next' : e.key === 'PageUp' || (e.shiftKey && e.key === 'ArrowLeft') ? 'prev' : e.key === 'Escape' ? 'menu' : '';
+  if (m && parent !== window) { e.preventDefault(); e.stopPropagation(); parent.postMessage({ sit: m }, '*'); }
+}, true);
+
+// ---------------------------------------------------------------- loop
+let last = 0, carry = 0, shownGen = 0;
+function tick(ts) {
+  const dt = Math.min(0.05, last ? (ts - last) / 1000 : 0.016); last = ts;
+  if (fit()) paintTrack();
+  if (mode === 'train') {
+    if (!stroke) { carry += dt * 60 * speed; let n = Math.min(40, Math.floor(carry)); carry -= Math.floor(carry); while (n-- > 0) stepTrain(); }
+  } else if (race) {
+    carry += dt * 60; let n = Math.min(4, Math.floor(carry)); carry -= Math.floor(carry); while (n-- > 0) stepRace();
+    const big = $('big'), t = race.t;
+    if (t < 0) { big.hidden = false; big.textContent = String(Math.ceil(-t)); } else if (t < 0.9) { big.hidden = false; big.textContent = 'GO'; } else big.hidden = true;
+  }
+  render(); drawBrain();
+  if (mode === 'train') {
+    $('gen').textContent = String(gen); $('alive').textContent = `${aliveN} of ${POP} still driving`;
+    $('lap').textContent = bestLap ? `Fastest lap: ${bestLap.toFixed(1)} s` : 'Fastest lap: none yet';
+  } else if (race) {
+    const you = race.set.PROG[0] / trk.n, lapNo = clamp(Math.floor(Math.max(0, you)) + 1, 1, RACE_LAPS);
+    $('alive').textContent = race.t < 0 ? 'Arrow keys or W A S D. Up is the throttle.' : `Lap ${lapNo} of ${RACE_LAPS}  ·  ${Math.max(0, race.t).toFixed(1)} s`;
+  }
+}
+function frame(ts) { requestAnimationFrame(frame); tick(ts); }
+
+buildTrack(DEFAULT); fit(); paintTrack(); newBrains(); syncUI();
+setTimeout(() => { hint.style.opacity = '0'; }, 18000);
+window.__mind = {
+  fast(gens) { const g0 = gen, t0 = performance.now(); let steps = 0; while (gen < g0 + gens && steps < 4e5) { stepTrain(); steps++; } return { gen, steps, ms: Math.round(performance.now() - t0), history: history.map(v => +v.toFixed(2)), bestLap: +bestLap.toFixed(2), genTimes }; },
+  run(n) { for (let i = 0; i < n; i++) tick(last + 16.7); return { gen, aliveN, mode, t: race ? +race.t.toFixed(2) : +simT.toFixed(2) }; },
+  track(pts) { buildTrack(pts); paintTrack(); startGeneration(); }, startRace, endRace, keys, get race() { return race; }, get trk() { return trk; },
+};
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

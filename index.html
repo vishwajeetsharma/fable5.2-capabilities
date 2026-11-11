@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Six Impossible Things</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap">
+<style>
+/* Layout: a theatre programme. Masthead on the left, the bill of six acts on the right, the house clock under the title. */
+:root {
+  color-scheme: dark;
+  --stage: #0c0a11; --wing: #17131f; --ink: #f4efe4; --dim: #aaa297; --rule: rgba(244,239,228,.16); --gilt: #e3b85c; --alarm: #ff7a5c;
+  --display: "Instrument Serif", "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  --text: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--stage); color: var(--ink); font: 15px/1.5 var(--text); -webkit-font-smoothing: antialiased; }
+#dust { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+
+.programme { position: relative; min-height: 100%; max-width: 1320px; margin: 0 auto; display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: clamp(28px, 6vw, 96px); align-items: center;
+  padding-block: clamp(24px, 5vh, 56px); padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.masthead { display: flex; flex-direction: column; gap: 22px; min-width: 0; padding-left: clamp(0px, 2vw, 28px); }
+.eyebrow { margin: 0; font-size: 12px; letter-spacing: .24em; text-transform: uppercase; color: var(--dim); }
+h1 { margin: 0; font: 400 clamp(54px, 7.4vw, 100px)/.9 var(--display); letter-spacing: -.012em; }
+h1 em { color: var(--gilt); font-style: italic; }
+.lede { margin: 0; max-width: 46ch; color: var(--dim); font-size: 16px; }
+.lede b { color: var(--ink); font-weight: 500; }
+.house { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.keys { margin: 0; font-size: 12.5px; color: var(--dim); max-width: 52ch; }
+kbd { font: 12px/1 var(--mono); padding: 2px 6px; border: 1px solid var(--rule); border-radius: 5px; color: var(--ink); white-space: nowrap; }
+
+button { font: inherit; color: inherit; cursor: pointer; }
+button:focus-visible { outline: 2px solid var(--gilt); outline-offset: 3px; }
+.begin { appearance: none; border: 0; border-radius: 999px; padding: 13px 26px; background: var(--gilt); color: #1a1205; font-weight: 600; font-size: 15px; letter-spacing: .02em; }
+.begin:hover { filter: brightness(1.08); }
+.ghost { appearance: none; border: 1px solid var(--rule); border-radius: 999px; padding: 9px 15px; background: transparent; font-size: 13px; color: var(--ink); }
+.ghost:hover { border-color: var(--dim); }
+.ghost.on { border-color: var(--gilt); color: var(--gilt); }
+.clock { font: 500 22px/1 var(--mono); font-variant-numeric: tabular-nums; letter-spacing: .02em; padding: 10px 16px; }
+.clock.run { border-color: var(--gilt); }
+.clock.low { color: var(--alarm); border-color: var(--alarm); }
+
+.bill { list-style: none; margin: 0; padding: 0; min-width: 0; border-top: 1px solid var(--rule); }
+.bill li { border-bottom: 1px solid var(--rule); }
+.act { appearance: none; width: 100%; display: grid; grid-template-columns: clamp(34px, 4.4vw, 60px) minmax(0, 1fr) auto; align-items: baseline; column-gap: clamp(12px, 2vw, 24px);
+  padding: clamp(11px, 1.9vh, 19px) clamp(8px, 1.2vw, 16px); border: 0; background: transparent; text-align: left; transition: background .2s, padding-left .2s; }
+.act:hover, .act:focus-visible { background: var(--wing); padding-left: clamp(14px, 2vw, 28px); }
+.num { font: italic 400 clamp(24px, 2.8vw, 36px)/1 var(--display); color: var(--gilt); text-align: right; }
+.what { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.name { font: 400 clamp(26px, 3vw, 40px)/1.02 var(--display); }
+.line { color: var(--dim); font-size: 14.5px; }
+.cue { color: var(--ink); font-size: 13px; padding-top: 5px; }
+.cue::before { content: "Cue  "; color: var(--gilt); font-size: 11px; letter-spacing: .18em; text-transform: uppercase; }
+.time { font: 13px/1 var(--mono); font-variant-numeric: tabular-nums; color: var(--dim); }
+.foot { margin: 14px 0 0; padding: 0 clamp(8px, 1.2vw, 16px); display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 20px; font-size: 12.5px; color: var(--dim); }
+
+/* the stage: one act at a time, full screen, with a small prompter's bar */
+#stage { position: fixed; inset: 0; background: #000; z-index: 20; }
+#stage iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: block; background: #000; }
+#hud { position: absolute; top: max(10px, env(safe-area-inset-top, 0px)); left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 2px; padding: 4px; border-radius: 999px;
+  background: rgba(12,10,17,.74); border: 1px solid var(--rule); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); opacity: .34; transition: opacity .5s; overflow: hidden; max-width: calc(100% - 32px); }
+#hud:hover, #hud:focus-within, #hud.wake { opacity: 1; }
+#hud button { appearance: none; border: 0; background: transparent; padding: 7px 11px; border-radius: 999px; font-size: 13px; line-height: 1; white-space: nowrap; }
+#hud button:hover { background: rgba(244,239,228,.12); }
+#hud .arrow { font-size: 17px; padding: 5px 11px 7px; }
+#hud .where { font-family: var(--display); font-size: 17px; }
+#hud .where i { color: var(--gilt); padding-right: 7px; }
+#hud .tick { font: 500 13px/1 var(--mono); font-variant-numeric: tabular-nums; }
+#hud .tick.low { color: var(--alarm); }
+#budget { position: absolute; left: 0; bottom: 0; height: 2px; width: 0; background: var(--gilt); transition: width .25s linear; }
+#budget.over { background: var(--alarm); }
+.slate { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; text-align: center; background: var(--stage); transition: opacity .45s; pointer-events: none;
+  padding: 24px max(16px, env(safe-area-inset-right, 0px)) 24px max(16px, env(safe-area-inset-left, 0px)); }
+.slate.gone { opacity: 0; }
+.slate .eyebrow { color: var(--gilt); }
+.slate h2 { margin: 0; font: 400 clamp(64px, 13vw, 190px)/.9 var(--display); }
+.slate p { margin: 0; color: var(--dim); max-width: 44ch; font-size: 16px; }
+#fin { pointer-events: auto; }
+#fin .house { justify-content: center; padding-top: 8px; }
+
+@media (max-width: 860px) {
+  .programme { grid-template-columns: minmax(0, 1fr); align-items: start; gap: 30px; }
+  .masthead { padding-left: 0; }
+  #hud .where span { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { .act, .slate, #hud { transition: none; } }
+</style>
+</head>
+<body>
+<canvas id="dust" aria-hidden="true"></canvas>
+<main class="programme" id="programme">
+  <header class="masthead">
+    <p class="eyebrow">A programme in six acts</p>
+    <h1>Six<br><em>Impossible</em><br>Things</h1>
+    <p class="lede">Six live demonstrations, each one a single web page. <b>No video, no images, no libraries.</b> Every particle, wave, mountain, star, decision and note is computed in this browser tab while you watch.</p>
+    <div class="house">
+      <button type="button" class="begin" id="begin">Begin the show</button>
+      <button type="button" class="ghost clock" id="clock" aria-label="Show clock. Press to start or pause.">10:00</button>
+      <button type="button" class="ghost" id="reset">reset clock</button>
+      <button type="button" class="ghost" id="cues" aria-pressed="false">presenter cues</button>
+    </div>
+    <p class="keys">On stage: <kbd>Shift</kbd> + <kbd>&rarr;</kbd> next act, <kbd>Shift</kbd> + <kbd>&larr;</kbd> previous, <kbd>Esc</kbd> back here. A clicker's <kbd>Page Down</kbd> works too. The bar at the top of the stage does the same by mouse.</p>
+  </header>
+  <div>
+    <ol class="bill" id="bill">
+      <li><button type="button" class="act" data-act="crowd" data-secs="80"><span class="num">I</span><span class="what"><span class="name">Crowd</span><span class="line">100,000 particles, one for each person watching. Type a word and they become it.</span><span class="cue" hidden>Let HELLO and 100,000 form. Type the name of your audience. Hold the mouse down to gather the crowd, let go to burst. Finish on &ldquo;heart&rdquo;.</span></span><span class="time">1:20</span></button></li>
+      <li><button type="button" class="act" data-act="fluid" data-secs="70"><span class="num">II</span><span class="what"><span class="name">Fluid</span><span class="line">Real fluid dynamics you stir by hand: neon smoke, ink on paper, oil on water.</span><span class="cue" hidden>Stir slowly, then fast. Tap for a bloom, press space for fireworks. Switch to ink on paper, then oil film.</span></span><span class="time">1:10</span></button></li>
+      <li><button type="button" class="act" data-act="world" data-secs="100"><span class="num">III</span><span class="what"><span class="name">World</span><span class="line">A flight through mountains, water and weather that exist only as arithmetic.</span><span class="cue" hidden>Let it fly. Drag the sun from afternoon through sunset into night for the aurora. Press &ldquo;new world&rdquo; twice.</span></span><span class="time">1:40</span></button></li>
+      <li><button type="button" class="act" data-act="galaxy" data-secs="110"><span class="num">IV</span><span class="what"><span class="name">Galaxy</span><span class="line">A million stars under gravity. Collide two galaxies, then run time backwards.</span><span class="cue" hidden>Drag to tilt. Press collide. Hold &ldquo;fast&rdquo; through the merger, then hold &ldquo;rewind&rdquo; until both spirals are whole again.</span></span><span class="time">1:50</span></button></li>
+      <li><button type="button" class="act" data-act="mind" data-secs="130"><span class="num">V</span><span class="what"><span class="name">Mind</span><span class="line">200 random neural networks learn to drive a track you draw. Then you race the winner.</span><span class="cue" hidden>Watch generation 1 crash. Wait for the first clean lap, about 25 seconds. Draw a new loop: the same brains drive it first time. Then race with the arrow keys.</span></span><span class="time">2:10</span></button></li>
+      <li><button type="button" class="act" data-act="sound" data-secs="90"><span class="num">VI</span><span class="what"><span class="name">Sound</span><span class="line">Music composed and synthesised as it plays. Join in: no note you add can be wrong.</span><span class="cue" hidden>Tap to begin; the beat arrives at bar 5. Play A S D F G H J K L in any order. Switch to drift, then dawn to close.</span></span><span class="time">1:30</span></button></li>
+    </ol>
+    <p class="foot"><span>Running time 9 minutes 40 seconds. No interval.</span><span>Sound in Act VI: check the volume first.</span></p>
+  </div>
+</main>
+
+<div id="stage" hidden>
+  <div class="slate gone" id="slate"><p class="eyebrow" id="slateAct">Act I</p><h2 id="slateName">Crowd</h2><p id="slateLine"></p></div>
+  <div class="slate" id="fin" hidden>
+    <p class="eyebrow">Curtain</p><h2>Fin.</h2>
+    <p id="finLine">Six acts. Nothing you saw was recorded.</p>
+    <div class="house"><button type="button" class="begin" id="again">Back to the programme</button></div>
+  </div>
+  <div id="hud">
+    <button type="button" class="arrow" id="hPrev" aria-label="Previous act">&lsaquo;</button>
+    <button type="button" class="where" id="hMenu" aria-label="Back to the programme"><i id="hNum">I</i><span id="hName">Crowd</span></button>
+    <button type="button" class="tick" id="hClock" aria-label="Show clock. Press to start or pause.">10:00</button>
+    <button type="button" id="hFull" aria-label="Full screen">full screen</button>
+    <button type="button" class="arrow" id="hNext" aria-label="Next act">&rsaquo;</button>
+    <span id="budget"></span>
+  </div>
+</div>
+
+<script>
+(() => {
+'use strict';
+const $ = id => document.getElementById(id);
+const ACTS = Array.from(document.querySelectorAll('.act')).map(el => ({ el, id: el.dataset.act, secs: Number(el.dataset.secs), src: 'demos/' + el.dataset.act + '.html',
+  numeral: el.querySelector('.num').textContent, name: el.querySelector('.name').textContent, line: el.querySelector('.line').textContent }));
+const TOTAL = 600, stage = $('stage'), slate = $('slate'), fin = $('fin'), hud = $('hud');
+let cur = -1, frame = null, remaining = TOTAL, running = false, lastT = 0, inAct = 0, wakeT = 0, slateT = 0, token = 0;
+
+// ---------------------------------------------------------------- the house clock
+const fmt = s => { const neg = s < 0, a = Math.abs(Math.ceil(s)); return (neg ? '+' : '') + Math.floor(a / 60) + ':' + String(a % 60).padStart(2, '0'); };
+function paintClock() {
+  for (const el of [$('clock'), $('hClock')]) { el.textContent = fmt(remaining); el.classList.toggle('low', remaining <= 60); }
+  $('clock').classList.toggle('run', running);
+  if (cur >= 0 && cur < ACTS.length) { const b = $('budget'), f = inAct / ACTS[cur].secs; b.style.width = Math.min(100, f * 100) + '%'; b.classList.toggle('over', f > 1); }
+}
+function setRunning(v) { running = v; lastT = performance.now(); paintClock(); }
+setInterval(() => {
+  const now = performance.now(), dt = Math.min(1, (now - lastT) / 1000); lastT = now;
+  if (running) { remaining -= dt; if (cur >= 0 && cur < ACTS.length) inAct += dt; paintClock(); }
+}, 200);
+$('clock').addEventListener('click', () => setRunning(!running));
+$('hClock').addEventListener('click', () => { setRunning(!running); refocus(); });
+$('reset').addEventListener('click', () => { remaining = TOTAL; setRunning(false); });
+
+// ---------------------------------------------------------------- loading an act
+// Over http each act is fetched once and handed to the frame as text, so a show survives the network dropping mid-way. From a local file the frame simply opens it.
+const cache = {};
+const pull = a => location.protocol === 'file:' ? Promise.resolve(null) : (cache[a.id] || (cache[a.id] = fetch(a.src).then(r => r.ok ? r.text() : null).catch(() => null)));
+if (location.protocol !== 'file:') ACTS.forEach(pull);
+const refocus = () => { try { if (frame) { frame.focus(); frame.contentWindow.focus(); } } catch (_) {} };
+function wake() { hud.classList.add('wake'); clearTimeout(wakeT); wakeT = setTimeout(() => hud.classList.remove('wake'), 2800); }
+function open(i) {
+  const a = ACTS[i], mine = ++token; cur = i; inAct = 0;
+  stage.hidden = false; fin.hidden = true; document.documentElement.style.overflow = 'hidden';
+  $('slateAct').textContent = 'Act ' + a.numeral; $('slateName').textContent = a.name; $('slateLine').textContent = a.line; slate.classList.remove('gone');
+  $('hNum').textContent = a.numeral; $('hName').textContent = a.name; paintClock(); wake();
+  if (frame) frame.remove();
+  frame = document.createElement('iframe'); frame.title = 'Act ' + a.numeral + ': ' + a.name; frame.setAttribute('allow', 'autoplay; fullscreen');
+  stage.insertBefore(frame, stage.firstChild);
+  const f = frame; f.addEventListener('load', () => { if (mine === token) refocus(); });
+  pull(a).then(html => { if (mine !== token) return; if (html) f.srcdoc = html; else f.src = a.src; });
+  clearTimeout(slateT); slateT = setTimeout(() => { if (mine === token) { slate.classList.add('gone'); refocus(); } }, 1150);
+  try { history.replaceState(null, '', '#' + a.id); } catch (_) {}
+  if (!running && remaining === TOTAL) setRunning(true);
+}
+function close() {
+  token++; cur = -1; if (frame) { frame.remove(); frame = null; }
+  stage.hidden = true; fin.hidden = true; document.documentElement.style.overflow = '';
+  try { history.replaceState(null, '', location.pathname + location.search); } catch (_) {}
+  startDust();
+}
+function finish() {
+  token++; if (frame) { frame.remove(); frame = null; }
+  const used = TOTAL - remaining; setRunning(false);
+  $('finLine').textContent = `Six acts in ${fmt(used)}. Nothing you saw was recorded: it was all worked out in this tab, as it happened.`;
+  fin.hidden = false; slate.classList.add('gone'); cur = ACTS.length; $('again').focus();
+}
+const next = () => { if (cur < 0) open(0); else if (cur < ACTS.length - 1) open(cur + 1); else if (cur === ACTS.length - 1) finish(); };
+const prev = () => { if (cur >= ACTS.length) open(ACTS.length - 1); else if (cur > 0) open(cur - 1); };
+
+ACTS.forEach((a, i) => a.el.addEventListener('click', () => open(i)));
+$('begin').addEventListener('click', () => { open(0); if (navigator.wakeLock) navigator.wakeLock.request('screen').catch(() => {}); });
+$('again').addEventListener('click', close);
+$('hPrev').addEventListener('click', prev); $('hNext').addEventListener('click', next); $('hMenu').addEventListener('click', close);
+$('hFull').addEventListener('click', () => {
+  const d = document, el = d.documentElement;
+  try { (d.fullscreenElement ? d.exitFullscreen() : el.requestFullscreen()).catch(() => {}); } catch (_) {}
+  refocus();
+});
+$('cues').addEventListener('click', e => {
+  const on = e.currentTarget.getAttribute('aria-pressed') !== 'true'; e.currentTarget.setAttribute('aria-pressed', String(on)); e.currentTarget.classList.toggle('on', on);
+  document.querySelectorAll('.cue').forEach(c => { c.hidden = !on; });
+});
+
+// keys pressed inside an act arrive here as messages; keys pressed on this page are handled directly
+addEventListener('message', e => { if (!frame || e.source !== frame.contentWindow || !e.data) return; const m = e.data.sit; if (m === 'next') next(); else if (m === 'prev') prev(); else if (m === 'menu') close(); });
+addEventListener('keydown', e => {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const k = e.key;
+  if (k === 'PageDown' || k === 'ArrowRight') { e.preventDefault(); next(); }
+  else if (k === 'PageUp' || k === 'ArrowLeft') { e.preventDefault(); prev(); }
+  else if (k === 'Escape') { if (cur >= 0) close(); }
+  else if (cur < 0 && k >= '1' && k <= '6') open(Number(k) - 1);
+});
+addEventListener('hashchange', () => { const i = ACTS.findIndex(a => '#' + a.id === location.hash); if (i >= 0 && i !== cur) open(i); });
+
+// ---------------------------------------------------------------- house lights: slow gilt dust behind the programme
+const dust = $('dust'), dc = dust.getContext('2d'), calm = matchMedia('(prefers-reduced-motion: reduce)').matches;
+let motes = [], dustOn = false;
+function sizeDust() {
+  const r = Math.min(window.devicePixelRatio || 1, 2); dust.width = Math.round(innerWidth * r); dust.height = Math.round(innerHeight * r);
+  motes = Array.from({ length: Math.round(Math.min(260, innerWidth * innerHeight / 5200)) }, () => ({ x: Math.random() * dust.width, y: Math.random() * dust.height, z: 0.3 + Math.random() * 0.7, p: Math.random() * 6.28 }));
+}
+function drawDust(t) {
+  if (!stage.hidden) { dustOn = false; return; }
+  dc.clearRect(0, 0, dust.width, dust.height);
+  for (const m of motes) {
+    if (!calm) { m.x += Math.sin(t / 5200 + m.p) * 0.12 * m.z; m.y -= 0.09 * m.z; if (m.y < -4) { m.y = dust.height + 4; m.x = Math.random() * dust.width; } }
+    dc.fillStyle = `rgba(227,184,92,${(0.1 + 0.2 * (0.5 + 0.5 * Math.sin(t / 1700 + m.p))) * m.z})`;
+    dc.beginPath(); dc.arc(m.x, m.y, 1.5 * m.z * (dust.width / innerWidth), 0, 6.2832); dc.fill();
+  }
+  if (calm) { dustOn = false; return; }
+  requestAnimationFrame(drawDust);
+}
+function startDust() { if (dustOn) return; dustOn = true; requestAnimationFrame(drawDust); }
+addEventListener('resize', () => { sizeDust(); if (calm) startDust(); });
+sizeDust(); startDust(); paintClock();
+
+{ const i = ACTS.findIndex(a => '#' + a.id === location.hash); if (i >= 0) open(i); }
+})();
+</script>
+</body>
+</html>
